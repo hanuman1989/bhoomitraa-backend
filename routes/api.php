@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Account\AuthController as AccountAuthController;
 use App\Http\Controllers\Admin\ActivityCategoryController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AuthController as AdminAuthController;
@@ -23,7 +24,6 @@ use App\Http\Controllers\Admin\SeasonController;
 use App\Http\Controllers\Admin\SeedController;
 use App\Http\Controllers\Admin\SeedLotController;
 use App\Http\Controllers\Admin\SeedPriceController;
-use App\Http\Controllers\AuthController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('admin')->name('admin.')->group(function (): void {
@@ -139,11 +139,13 @@ Route::prefix('admin')->name('admin.')->group(function (): void {
     });
 });
 
-Route::post('login', [AuthController::class, 'login'])->middleware('throttle:login')->name('login');
-
 Route::apiResource('regions', RegionController::class)->only(['index', 'show']);
 
-Route::middleware(['auth:frontend', 'abilities:frontend'])->group(function (): void {
-    Route::get('me', [AuthController::class, 'me'])->name('me');
-    Route::post('logout', [AuthController::class, 'logout'])->name('logout');
+Route::prefix('account')->name('account.')->group(function (): void {
+    Route::post('login', [AccountAuthController::class, 'login'])->middleware('throttle:login')->name('login');
+
+    Route::middleware(['auth:user', 'abilities:frontend', 'user.active'])->group(function (): void {
+        Route::get('me', [AccountAuthController::class, 'me'])->name('me');
+        Route::post('logout', [AccountAuthController::class, 'logout'])->name('logout');
+    });
 });

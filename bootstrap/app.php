@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\EnsureActiveAdmin;
+use App\Http\Middleware\EnsureActiveUser;
 use App\Http\Middleware\SetLocale;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -23,10 +24,12 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'admin.active' => EnsureActiveAdmin::class,
+            'user.active' => EnsureActiveUser::class,
             'abilities' => CheckAbilities::class,
         ]);
     })
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->redirectGuestsTo(static fn (): ?string => null);
         $middleware->api(append: [
             SetLocale::class,
         ]);
@@ -51,7 +54,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 default => $httpStatus >= 500 ? 'An unexpected error occurred.' : (Response::$statusTexts[$httpStatus] ?? 'Request failed.'),
             };
 
-            if ($httpStatus === 403 && $exception instanceof HttpExceptionInterface && $exception->getMessage() === 'Admin account is inactive.') {
+            if ($httpStatus === 403 && $exception instanceof HttpExceptionInterface && in_array($exception->getMessage(), ['Admin account is inactive.', 'User account is inactive.'], true)) {
                 $message = $exception->getMessage();
             }
 

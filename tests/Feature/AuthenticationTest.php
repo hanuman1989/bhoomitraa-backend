@@ -17,7 +17,7 @@ test('login database lookup failures return a safe 500 and are reported', functi
     Schema::drop((new $model)->getTable());
     Exceptions::fake();
 
-    $response = $this->postJson($prefix.'/login', ['email' => 'user@example.com', 'password' => 'password']);
+    $response = $this->postJson($prefix.'/login', ['email' => 'user@example.com', 'mobile' => '9876543210', 'password' => 'password']);
 
     $response->assertInternalServerError()->assertExactJson([
         'status' => false, 'data' => null,
@@ -28,7 +28,7 @@ test('login database lookup failures return a safe 500 and are reported', functi
     Exceptions::assertReported(QueryException::class);
 })->with([
     'admin' => [AdminUser::class, '/api/admin'],
-    'frontend' => [User::class, '/api'],
+    'frontend' => [User::class, '/api/account'],
 ]);
 
 test('failed token creation returns 500 and issues no login token', function (string $model, string $prefix) {
@@ -36,14 +36,14 @@ test('failed token creation returns 500 and issues no login token', function (st
     DB::unprepared("CREATE TRIGGER fail_token_insert BEFORE INSERT ON personal_access_tokens BEGIN SELECT RAISE(ABORT, 'internal database failure'); END");
     Exceptions::fake();
 
-    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'password' => 'password']);
+    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'password']);
 
     $response->assertInternalServerError()->assertJsonPath('status', false)->assertJsonPath('data', null)->assertJsonPath('message', 'Unable to log in. Please try again later.');
     $this->assertDatabaseCount('personal_access_tokens', 0);
     Exceptions::assertReported(QueryException::class);
 })->with([
     'admin' => [AdminUser::class, '/api/admin'],
-    'frontend' => [User::class, '/api'],
+    'frontend' => [User::class, '/api/account'],
 ]);
 
 test('failed logout returns 500 and retains the current token', function (string $model, string $prefix, string $ability) {
@@ -59,7 +59,7 @@ test('failed logout returns 500 and retains the current token', function (string
     Exceptions::assertReported(QueryException::class);
 })->with([
     'admin' => [AdminUser::class, '/api/admin', 'admin'],
-    'frontend' => [User::class, '/api', 'frontend'],
+    'frontend' => [User::class, '/api/account', 'frontend'],
 ]);
 
 test('login issues a scoped bearer token and hides sensitive account fields', function (string $model, string $prefix, string $accountKey, string $ability) {
@@ -67,7 +67,7 @@ test('login issues a scoped bearer token and hides sensitive account fields', fu
     $account = $model::factory()->create();
 
     $response = $this->postJson($prefix.'/login', [
-        'email' => $account->email,
+        'email' => $account->email, 'mobile' => $account->mobile,
         'password' => 'password',
         'device_name' => 'test-client',
         'abilities' => ['*'],
@@ -91,7 +91,7 @@ test('login issues a scoped bearer token and hides sensitive account fields', fu
     expect(array_keys($response->json()))->toBe(['status', 'data', 'pagination', 'message']);
 })->with([
     'admin' => [AdminUser::class, '/api/admin', 'admin_user', 'admin'],
-    'frontend' => [User::class, '/api', 'user', 'frontend'],
+    'frontend' => [User::class, '/api/account', 'user', 'frontend'],
 ]);
 
 test('an account can retrieve its profile with a real bearer token', function (string $model, string $prefix, string $ability) {
@@ -103,7 +103,7 @@ test('an account can retrieve its profile with a real bearer token', function (s
     $response->assertOk()->assertJsonPath('data.id', $account->id)->assertJsonMissingPath('data.password')->assertJsonMissingPath('data.remember_token');
 })->with([
     'admin' => [AdminUser::class, '/api/admin', 'admin'],
-    'frontend' => [User::class, '/api', 'frontend'],
+    'frontend' => [User::class, '/api/account', 'frontend'],
 ]);
 
 test('logout revokes only the current token', function (string $model, string $prefix, string $ability) {
@@ -118,7 +118,7 @@ test('logout revokes only the current token', function (string $model, string $p
     $this->assertModelExists($otherToken->accessToken);
 })->with([
     'admin' => [AdminUser::class, '/api/admin', 'admin'],
-    'frontend' => [User::class, '/api', 'frontend'],
+    'frontend' => [User::class, '/api/account', 'frontend'],
 ]);
 
 test('a token for the other account model receives 401 even with wildcard abilities and matching IDs', function (string $sourceModel, string $targetModel, string $targetPrefix) {
@@ -136,31 +136,31 @@ test('a token for the other account model receives 401 even with wildcard abilit
     ]);
 })->with([
     'frontend cannot access admin' => [User::class, AdminUser::class, '/api/admin'],
-    'admin cannot access frontend' => [AdminUser::class, User::class, '/api'],
+    'admin cannot access frontend' => [AdminUser::class, User::class, '/api/account'],
 ]);
 
 test('login rejects credentials from the other table with 401', function (string $sourceModel, string $targetPrefix) {
-    $account = $sourceModel::factory()->create();
+    $account = $sourceModel::factory()->create(['mobile' => '9876543210']);
 
-    $response = $this->postJson($targetPrefix.'/login', ['email' => $account->email, 'password' => 'password']);
+    $response = $this->postJson($targetPrefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'password']);
 
     $response->assertUnauthorized()->assertJsonPath('status', false);
     $this->assertDatabaseCount('personal_access_tokens', 0);
 })->with([
     'frontend credentials at admin login' => [User::class, '/api/admin'],
-    'admin credentials at frontend login' => [AdminUser::class, '/api'],
+    'admin credentials at frontend login' => [AdminUser::class, '/api/account'],
 ]);
 
 test('login rejects an incorrect password with 401 and issues no tokens', function (string $model, string $prefix) {
     $account = $model::factory()->create();
 
-    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'password' => 'wrong-password']);
+    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'wrong-password']);
 
     $response->assertUnauthorized()->assertJsonPath('data', null);
     $this->assertDatabaseCount('personal_access_tokens', 0);
 })->with([
     'admin' => [AdminUser::class, '/api/admin'],
-    'frontend' => [User::class, '/api'],
+    'frontend' => [User::class, '/api/account'],
 ]);
 
 test('inactive admins cannot log in and receive 401', function () {
@@ -176,7 +176,7 @@ test('login rejects invalid stored password hashes with 401 and creates no token
     $account = $model::factory()->create();
     DB::table($account->getTable())->where('id', $account->id)->update(['password' => $storedPassword]);
 
-    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'password' => 'password']);
+    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'password']);
 
     $response->assertUnauthorized()
         ->assertJsonPath('status', false)
@@ -187,11 +187,11 @@ test('login rejects invalid stored password hashes with 401 and creates no token
     $this->assertDatabaseHas($account->getTable(), ['id' => $account->id, 'password' => $storedPassword]);
 })->with([
     'admin plaintext' => [AdminUser::class, '/api/admin', 'password'],
-    'frontend plaintext' => [User::class, '/api', 'password'],
+    'frontend plaintext' => [User::class, '/api/account', 'password'],
     'admin malformed bcrypt' => [AdminUser::class, '/api/admin', '$2y$invalid'],
-    'frontend malformed bcrypt' => [User::class, '/api', '$2y$invalid'],
+    'frontend malformed bcrypt' => [User::class, '/api/account', '$2y$invalid'],
     'admin empty password' => [AdminUser::class, '/api/admin', ''],
-    'frontend empty password' => [User::class, '/api', ''],
+    'frontend empty password' => [User::class, '/api/account', ''],
 ]);
 
 test('a previously issued token cannot access an inactive admin account and receives 403', function () {
@@ -208,13 +208,13 @@ test('missing authentication returns a JSON 401 without an Accept header', funct
     $response = $this->get($path);
 
     $response->assertUnauthorized()->assertJsonPath('message', 'Unauthenticated.')->assertJsonPath('status', false);
-})->with(['/api/admin/me', '/api/me']);
+})->with(['/api/admin/me', '/api/account/me']);
 
 test('web sessions cannot authenticate bearer-only endpoints and receive 401', function () {
     $user = User::factory()->create();
     $this->actingAs($user, 'web');
 
-    $response = $this->getJson('/api/me');
+    $response = $this->getJson('/api/account/me');
 
     $response->assertUnauthorized();
 });
@@ -228,7 +228,7 @@ test('a token with the wrong ability receives 403', function (string $model, str
     $response->assertForbidden()->assertJsonPath('status', false)->assertJsonPath('data', null);
 })->with([
     'admin' => [AdminUser::class, '/api/admin', 'frontend'],
-    'frontend' => [User::class, '/api', 'admin'],
+    'frontend' => [User::class, '/api/account', 'admin'],
 ]);
 
 test('expired tokens receive 401', function () {
@@ -247,7 +247,7 @@ test('tokens older than the configured lifetime receive 401', function () {
     $token = $user->createToken('test', ['frontend']);
     $token->accessToken->forceFill(['created_at' => now()->subDay()->subMinute()])->save();
 
-    $response = $this->withToken($token->plainTextToken)->getJson('/api/me');
+    $response = $this->withToken($token->plainTextToken)->getJson('/api/account/me');
 
     $response->assertUnauthorized();
 });
@@ -257,7 +257,7 @@ test('revoked tokens receive 401', function () {
     $token = $user->createToken('test', ['frontend']);
     $token->accessToken->delete();
 
-    $response = $this->withToken($token->plainTextToken)->getJson('/api/me');
+    $response = $this->withToken($token->plainTextToken)->getJson('/api/account/me');
 
     $response->assertUnauthorized();
 });
@@ -277,8 +277,8 @@ test('missing login fields return the standard validation envelope with 422 with
     ]);
 });
 
-test('invalid login fields return 422', function (array $input, string $field) {
-    $response = $this->postJson('/api/login', array_replace(['email' => 'user@example.com', 'password' => 'password'], $input));
+test('invalid admin login fields return 422', function (array $input, string $field) {
+    $response = $this->postJson('/api/admin/login', array_replace(['email' => 'user@example.com', 'password' => 'password'], $input));
 
     $response->assertUnprocessable()->assertJsonValidationErrors($field);
 })->with([
