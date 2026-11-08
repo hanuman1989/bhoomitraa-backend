@@ -54,6 +54,26 @@ class Crop extends Model
         return $this->hasMany(CropStage::class);
     }
 
+    public function seeds(): HasMany
+    {
+        return $this->hasMany(Seed::class);
+    }
+
+    public function seedRates(): HasMany
+    {
+        return $this->hasMany(CropSeedRate::class);
+    }
+
+    public function yieldBenchmarks(): HasMany
+    {
+        return $this->hasMany(CropYieldBenchmark::class);
+    }
+
+    public function fertilizerRecommendations(): HasMany
+    {
+        return $this->hasMany(FertilizerRecommendation::class);
+    }
+
     public function translatedName(?string $locale = null): ?string
     {
         if (! $this->relationLoaded('translations')) {

@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\KnowledgeSourceFactory;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -45,6 +46,36 @@ class KnowledgeSource extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(KnowledgeSourceAttachment::class);
+    }
+
+    public function seeds(): HasMany
+    {
+        return $this->hasMany(Seed::class, 'source_id');
+    }
+
+    public function fertilizers(): HasMany
+    {
+        return $this->hasMany(Fertilizer::class, 'source_id');
+    }
+
+    public function seedPrices(): HasMany
+    {
+        return $this->hasMany(SeedPrice::class, 'source_id');
+    }
+
+    public function seedRates(): HasMany
+    {
+        return $this->hasMany(CropSeedRate::class, 'source_id');
+    }
+
+    public function yieldBenchmarks(): HasMany
+    {
+        return $this->hasMany(CropYieldBenchmark::class, 'source_id');
+    }
+
+    public function fertilizerRecommendations(): HasMany
+    {
+        return $this->hasMany(FertilizerRecommendation::class, 'source_id');
     }
 
     public function translations(): HasMany
@@ -115,14 +146,19 @@ class KnowledgeSource extends Model
         $this->rejection_reason = null;
     }
 
-    public function hasUsableReference(?int $excludingAttachmentId = null): bool
+    /** @param Collection<int, KnowledgeSourceAttachment>|null $attachments */
+    public function hasUsableReference(?int $excludingAttachmentId = null, ?Collection $attachments = null): bool
     {
         if (filled($this->source_url) || filled($this->reference_identifier)) {
             return true;
         }
 
-        foreach ($this->attachments()->when($excludingAttachmentId !== null,
-            fn (Builder $query): Builder => $query->whereKeyNot($excludingAttachmentId))->get() as $attachment) {
+        $attachments ??= $this->attachments()->when($excludingAttachmentId !== null,
+            fn (Builder $query): Builder => $query->whereKeyNot($excludingAttachmentId))->get();
+        foreach ($attachments as $attachment) {
+            if ($attachment->id === $excludingAttachmentId) {
+                continue;
+            }
             if (Storage::disk(config('filesystems.knowledge_sources_disk'))->exists($attachment->file_path)) {
                 return true;
             }

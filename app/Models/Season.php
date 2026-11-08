@@ -35,6 +35,21 @@ class Season extends Model
         return $this->hasMany(SeasonTranslation::class);
     }
 
+    public function seedRates(): HasMany
+    {
+        return $this->hasMany(CropSeedRate::class);
+    }
+
+    public function yieldBenchmarks(): HasMany
+    {
+        return $this->hasMany(CropYieldBenchmark::class);
+    }
+
+    public function fertilizerRecommendations(): HasMany
+    {
+        return $this->hasMany(FertilizerRecommendation::class);
+    }
+
     /** Resolve loaded translations without triggering queries during serialization. */
     public function translation(?string $locale = null): ?SeasonTranslation
     {

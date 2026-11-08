@@ -58,6 +58,26 @@ class CropVariety extends Model
         return $this->hasMany(CropVarietyTranslation::class);
     }
 
+    public function seeds(): HasMany
+    {
+        return $this->hasMany(Seed::class);
+    }
+
+    public function seedRates(): HasMany
+    {
+        return $this->hasMany(CropSeedRate::class);
+    }
+
+    public function yieldBenchmarks(): HasMany
+    {
+        return $this->hasMany(CropYieldBenchmark::class);
+    }
+
+    public function fertilizerRecommendations(): HasMany
+    {
+        return $this->hasMany(FertilizerRecommendation::class);
+    }
+
     public function source(): BelongsTo
     {
         return $this->belongsTo(KnowledgeSource::class, 'source_id');

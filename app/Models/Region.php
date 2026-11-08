@@ -58,6 +58,31 @@ class Region extends Model
         return $this->belongsToMany(CropStageTimeline::class, 'crop_stage_timeline_regions', 'region_id', 'crop_stage_timeline_id');
     }
 
+    public function cropActivityTemplates(): BelongsToMany
+    {
+        return $this->belongsToMany(CropActivityTemplate::class, 'crop_activity_template_regions', 'region_id', 'crop_activity_template_id');
+    }
+
+    public function seedPrices(): BelongsToMany
+    {
+        return $this->belongsToMany(SeedPrice::class, 'seed_price_regions');
+    }
+
+    public function cropSeedRates(): BelongsToMany
+    {
+        return $this->belongsToMany(CropSeedRate::class, 'crop_seed_rate_regions');
+    }
+
+    public function yieldBenchmarks(): BelongsToMany
+    {
+        return $this->belongsToMany(CropYieldBenchmark::class, 'crop_yield_benchmark_regions');
+    }
+
+    public function fertilizerRecommendations(): BelongsToMany
+    {
+        return $this->belongsToMany(FertilizerRecommendation::class, 'fertilizer_recommendation_regions');
+    }
+
     public function translatedName(?string $locale = null): ?string
     {
         $this->loadMissing('translations');

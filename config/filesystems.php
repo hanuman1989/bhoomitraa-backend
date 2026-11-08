@@ -18,8 +18,11 @@ return [
     'category_images_disk' => env('CATEGORY_IMAGES_DISK', 'public'),
 
     'crop_images_disk' => env('CROP_IMAGES_DISK', 'public'),
+    'seed_images_disk' => env('SEED_IMAGES_DISK', 'public'),
+    'fertilizer_images_disk' => env('FERTILIZER_IMAGES_DISK', 'public'),
 
     'knowledge_sources_disk' => env('KNOWLEDGE_SOURCES_DISK', 'private'),
+    'seed_lot_reports_disk' => env('SEED_LOT_REPORTS_DISK', 'private'),
 
     /*
     |--------------------------------------------------------------------------

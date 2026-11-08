@@ -39,8 +39,12 @@ class AppServiceProvider extends ServiceProvider
         Gate::define('manage-categories', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-regions', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-seasons', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
+        Gate::define('manage-activity-categories', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
+        Gate::define('manage-system-activity-categories', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status && $user->is_super_user);
         Gate::define('manage-crop-categories', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-crops', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
+        Gate::define('manage-seeds', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
+        Gate::define('manage-fertilizers', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-crop-ai-diagnosis', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status && $user->is_super_user);
         Gate::define('manage-knowledge-sources', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('review-knowledge-sources', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status && $user->is_super_user);
