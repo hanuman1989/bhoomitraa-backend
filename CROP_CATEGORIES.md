@@ -55,6 +55,12 @@ The manage-crops gate follows existing active-admin management permissions. Chan
 
 Crop migrations have been added separately from category migrations. Apply pending migrations during deployment with php artisan migrate --no-interaction. Crops and crop translations use the requested non-null DATETIME(6) schema. Rollback drops translations before crops and destroys their catalogue data; schema rollback does not dispatch image-cleanup model events.
 
+## Crop display color
+
+Crop create and PUT/PATCH update requests accept optional, nullable `crop_color`, stored only in `crops` as `VARCHAR(7)`. A supplied string must be `#` followed by exactly six hexadecimal digits, for example `#FFC107` or `#4caf50`. Omission preserves an existing color on update; JSON `null` clears it. Existing crops default to null and no palette is assigned automatically. Crop list/search/active-filter/detail/create/update responses expose `crop_color` independently of locale, using the existing response envelope and admin permissions.
+
+Related crop display resources and smart timeline selections also expose the master color through existing eager-loaded relationships. Apply the new `add_crop_color_to_crops_table` migration before serving the updated code. Its rollback removes the column and assigned colors. See [CROP_COLOR.md](CROP_COLOR.md) for request/response examples, affected modules, file inventory, verification results and frontend integration notes.
+
 ## Verification
 
     php artisan test --compact tests/Feature/CropCategoryControllerTest.php tests/Feature/CropCategoryPublicationTest.php

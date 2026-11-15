@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Account\LoginRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -17,9 +18,10 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         $credentials = $request->validated();
+        $column = filter_var($credentials['login'], FILTER_VALIDATE_EMAIL) ? 'email' : 'mobile';
         try {
-            $result = DB::transaction(function () use ($credentials): ?array {
-                $user = User::query()->where('mobile', $credentials['mobile'])->lockForUpdate()->first();
+            $result = DB::transaction(function () use ($credentials, $column): ?array {
+                $user = User::query()->where($column, $credentials['login'])->lockForUpdate()->first();
                 if (! $user || ! $user->status || ! $this->passwordMatches($credentials['password'], $user->password)) {
                     return null;
                 }
@@ -59,9 +61,11 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
+        $user = $request->user('user')->load(['farmerProfile' => fn (HasOne $profile): HasOne => $profile->withLocationNames()]);
+
         return response()->json([
             'status' => true,
-            'data' => new UserResource($request->user('user')),
+            'data' => new UserResource($user),
             'pagination' => null,
             'message' => 'User retrieved successfully.',
         ]);

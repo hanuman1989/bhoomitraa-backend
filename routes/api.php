@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\Account\AuthController as AccountAuthController;
+use App\Http\Controllers\Account\FarmController as AccountFarmController;
+use App\Http\Controllers\Account\UserController as AccountUserController;
 use App\Http\Controllers\Admin\ActivityCategoryController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AuthController as AdminAuthController;
@@ -142,9 +144,23 @@ Route::prefix('admin')->name('admin.')->group(function (): void {
 Route::apiResource('regions', RegionController::class)->only(['index', 'show']);
 
 Route::prefix('account')->name('account.')->group(function (): void {
+    Route::post('register', [AccountUserController::class, 'register'])->middleware('throttle:account-register')->name('register');
+    Route::post('forgot-password', [AccountUserController::class, 'forgotPassword'])->middleware('throttle:account-password')->name('forgot-password');
+    Route::post('reset-password', [AccountUserController::class, 'resetPassword'])->middleware('throttle:account-password')->name('reset-password');
     Route::post('login', [AccountAuthController::class, 'login'])->middleware('throttle:login')->name('login');
 
     Route::middleware(['auth:user', 'abilities:frontend', 'user.active'])->group(function (): void {
+        Route::get('area-units', [AccountUserController::class, 'areaUnits'])->name('area-units');
+        Route::get('farms/summary', [AccountFarmController::class, 'summary'])->name('farms.summary');
+        Route::get('farms', [AccountFarmController::class, 'index'])->name('farms.index');
+        Route::post('farms', [AccountFarmController::class, 'store'])->name('farms.store');
+        Route::get('farms/{farm}', [AccountFarmController::class, 'show'])->whereNumber('farm')->name('farms.show');
+        Route::patch('farms/{farm}', [AccountFarmController::class, 'update'])->whereNumber('farm')->name('farms.update');
+        Route::patch('farms/{farm}/details', [AccountFarmController::class, 'updateAdditionalDetails'])->whereNumber('farm')->name('farms.details');
+        Route::patch('farms/{farm}/boundary', [AccountFarmController::class, 'updateBoundary'])->whereNumber('farm')->name('farms.boundary');
+        Route::patch('farms/{farm}/status', [AccountFarmController::class, 'updateStatus'])->whereNumber('farm')->name('farms.status');
+        Route::patch('profile/personal', [AccountUserController::class, 'updatePersonalDetails'])->name('profile.personal');
+        Route::patch('profile/location', [AccountUserController::class, 'updateLocationDetails'])->name('profile.location');
         Route::get('me', [AccountAuthController::class, 'me'])->name('me');
         Route::post('logout', [AccountAuthController::class, 'logout'])->name('logout');
     });

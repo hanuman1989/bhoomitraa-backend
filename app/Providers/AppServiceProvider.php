@@ -56,12 +56,24 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(TransactionRolledBack::class, [CategoryObserver::class, 'rolledBack']);
 
         RateLimiter::for('login', function (Request $request): array {
-            $identifier = $request->input($request->routeIs('account.login') ? 'mobile' : 'email');
+            $identifier = $request->input($request->routeIs('account.login') ? 'login' : 'email');
             $identifier = is_string($identifier) ? Str::lower($identifier) : '';
 
             return [
                 Limit::perMinute(30)->by('login-ip:'.$request->ip()),
                 Limit::perMinute(5)->by($request->path().'|'.$identifier.'|'.$request->ip()),
+            ];
+        });
+
+        RateLimiter::for('account-register', fn (Request $request): Limit => Limit::perMinute(5)->by('account-register:'.$request->ip()));
+
+        RateLimiter::for('account-password', function (Request $request): array {
+            $email = $request->input('email');
+            $identifier = is_string($email) ? Str::lower(trim($email)) : '';
+
+            return [
+                Limit::perMinute(30)->by('account-password-ip:'.$request->ip()),
+                Limit::perMinute(5)->by($request->path().'|'.hash('sha256', $identifier).'|'.$request->ip()),
             ];
         });
     }

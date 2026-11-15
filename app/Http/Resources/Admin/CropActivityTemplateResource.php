@@ -22,6 +22,7 @@ class CropActivityTemplateResource extends JsonResource
             'id' => $this->id,
             'crop_id' => $this->crop_id,
             'crop_name' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->translatedName($locale)),
+            'crop_color' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->crop_color),
             'crop_variety_id' => $this->crop_variety_id,
             'crop_variety_name' => $this->whenLoaded('cropVariety', fn (): ?string => $this->cropVariety?->translatedName($locale)),
             'category_id' => $this->category_id,

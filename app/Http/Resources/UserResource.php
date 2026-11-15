@@ -25,6 +25,7 @@ class UserResource extends JsonResource
             'last_login_at' => $this->last_login_at?->toISOString(),
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
+            'farmer_profile' => $this->whenLoaded('farmerProfile', fn (): FarmerProfileResource => new FarmerProfileResource($this->farmerProfile)),
         ];
     }
 }

@@ -26,6 +26,8 @@ class CropVarietyController extends Controller
             'keyword' => ['sometimes', 'nullable', 'string', 'max:150'],
             'crop_id' => ['sometimes', 'integer', 'min:1', Rule::exists('crops', 'id')],
             'source_id' => ['sometimes', 'integer', 'min:1', Rule::exists('knowledge_sources', 'id')],
+            'knowledge_sources' => ['sometimes', 'array', 'list'],
+            'knowledge_sources.*' => ['required', 'integer', 'distinct', Rule::exists('knowledge_sources', 'id')],
             'status' => ['sometimes', 'boolean'],
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
@@ -36,14 +38,19 @@ class CropVarietyController extends Controller
                 ->with([
                     'crop.translations' => fn (HasMany $translations): HasMany => $translations
                         ->whereIn('locale', array_unique([app()->getLocale(), config('languages.default')])),
-                    'source:id,title',
+                    'knowledgeSources:id,title',
                 ]);
 
             if (array_key_exists('crop_id', $filters)) {
                 $query->where('crop_varieties.crop_id', $filters['crop_id']);
             }
+            if (array_key_exists('knowledge_sources', $filters)) {
+                $query->whereHas('knowledgeSources', fn (Builder $knowledgeSourcesQuery): Builder => $knowledgeSourcesQuery
+                    ->whereIn('knowledge_sources.id', $filters['knowledge_sources']));
+            }
             if (array_key_exists('source_id', $filters)) {
-                $query->where('crop_varieties.source_id', $filters['source_id']);
+                $query->whereHas('knowledgeSources', fn (Builder $knowledgeSourcesQuery): Builder => $knowledgeSourcesQuery
+                    ->where('knowledge_sources.id', $filters['source_id']));
             }
             if (array_key_exists('status', $filters)) {
                 $query->where('crop_varieties.is_active', $filters['status']);
@@ -91,9 +98,10 @@ class CropVarietyController extends Controller
             $variety = $this->saveVariety(
                 new CropVariety,
                 $request->safe()->only([
-                    'crop_id', 'slug', 'variety_code', 'maturity_days_min', 'maturity_days_max', 'source_id', 'is_active',
+                    'crop_id', 'slug', 'variety_code', 'maturity_days_min', 'maturity_days_max', 'is_active',
                 ]),
                 $request->validated('translations', []),
+                $this->resolveKnowledgeSourceIds($request->validated()),
             );
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to create the crop variety. Please try again later.');
@@ -109,7 +117,7 @@ class CropVarietyController extends Controller
 
     public function show(CropVariety $cropVariety): JsonResponse
     {
-        $cropVariety->load(['crop.translations', 'translations', 'source:id,title']);
+        $cropVariety->load(['crop.translations', 'translations', 'knowledgeSources:id,title']);
 
         return response()->json([
             'status' => true,
@@ -122,12 +130,18 @@ class CropVarietyController extends Controller
     public function update(UpdateCropVarietyRequest $request, CropVariety $cropVariety): JsonResponse
     {
         try {
+            $knowledgeSourceIds = null;
+            if ($request->has('knowledge_sources') || $request->has('source_id')) {
+                $knowledgeSourceIds = $this->resolveKnowledgeSourceIds($request->validated());
+            }
+
             $variety = $this->saveVariety(
                 $cropVariety,
                 $request->safe()->only([
-                    'crop_id', 'slug', 'variety_code', 'maturity_days_min', 'maturity_days_max', 'source_id', 'is_active',
+                    'crop_id', 'slug', 'variety_code', 'maturity_days_min', 'maturity_days_max', 'is_active',
                 ]),
                 $request->validated('translations', []),
+                $knowledgeSourceIds,
             );
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to update the crop variety. Please try again later.');
@@ -153,7 +167,7 @@ class CropVarietyController extends Controller
                 }
                 $variety->save();
 
-                return $variety->load(['crop.translations', 'translations', 'source:id,title']);
+                return $variety->load(['crop.translations', 'translations', 'knowledgeSources:id,title']);
             }, attempts: 3);
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to update the crop variety status. Please try again later.');
@@ -204,11 +218,11 @@ class CropVarietyController extends Controller
      * @param  array<string, mixed>  $attributes
      * @param  array<string, array{name?: string, description?: string|null, region_notes?: string|null}>  $translations
      */
-    private function saveVariety(CropVariety $variety, array $attributes, array $translations): CropVariety
+    private function saveVariety(CropVariety $variety, array $attributes, array $translations, ?array $knowledgeSourceIds = null): CropVariety
     {
         $varietyId = $variety->exists ? $variety->id : null;
 
-        return DB::transaction(function () use ($varietyId, $attributes, $translations): CropVariety {
+        return DB::transaction(function () use ($varietyId, $attributes, $translations, $knowledgeSourceIds): CropVariety {
             $variety = $varietyId === null
                 ? new CropVariety
                 : CropVariety::query()->lockForUpdate()->findOrFail($varietyId);
@@ -232,8 +246,31 @@ class CropVarietyController extends Controller
                 $variety->translations()->updateOrCreate(['locale' => $locale], $values);
             }
 
-            return $variety->load(['crop.translations', 'translations', 'source:id,title']);
+            if ($knowledgeSourceIds !== null) {
+                $variety->knowledgeSources()->sync($knowledgeSourceIds);
+            }
+
+            return $variety->load(['crop.translations', 'translations', 'knowledgeSources:id,title']);
         }, attempts: 3);
+    }
+
+    /**
+     * @param  array<string, mixed>  $validated
+     * @return list<int>
+     */
+    private function resolveKnowledgeSourceIds(array $validated): array
+    {
+        $ids = collect($validated['knowledge_sources'] ?? [])
+            ->map(fn (mixed $value): int => (int) $value)
+            ->filter(fn (int $value): bool => $value > 0)
+            ->values()
+            ->all();
+
+        if ($ids === [] && array_key_exists('source_id', $validated) && $validated['source_id'] !== null) {
+            $ids = [(int) $validated['source_id']];
+        }
+
+        return array_values(array_unique($ids));
     }
 
     private function deletionConflict(): JsonResponse

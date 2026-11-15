@@ -58,6 +58,7 @@ class FarmerSmartTimelineGenerator
         $this->warning($warnings, 'CONTENT_APPROVAL_LIMITATION', 'This preview checks configured publication requirements. Claim-level scientific approval is not recorded and remains a reviewer responsibility.');
         $selection = [
             'crop_name' => $this->name($crop, 'crop', $warnings),
+            'crop_color' => $crop->crop_color,
             'crop_variety_name' => $variety === null ? null : $this->name($variety, 'crop_variety', $warnings),
             'season_name' => $this->name($season, 'season', $warnings),
             'district_name' => $this->name($district, 'region', $warnings),

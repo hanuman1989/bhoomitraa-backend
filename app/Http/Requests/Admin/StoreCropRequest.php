@@ -37,6 +37,7 @@ class StoreCropRequest extends FormRequest
             'slug' => ['required', 'string', 'max:255', 'regex:/^[a-z0-9]+(?:-[a-z0-9]+)*$/D', Rule::unique('crops', 'slug')],
             'scientific_name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'crop_code' => ['sometimes', 'nullable', 'string', 'max:50', Rule::unique('crops', 'crop_code')],
+            'crop_color' => ['bail', 'sometimes', 'nullable', 'string', 'max:7', 'regex:/^#[0-9A-Fa-f]{6}$/D'],
             'image' => ['sometimes', 'nullable', File::image()->types(['jpg', 'jpeg', 'png', 'webp'])->extensions(['jpg', 'jpeg', 'png', 'webp'])->max('5mb')],
             'is_active' => ['sometimes', 'boolean'],
             'ai_diagnosis_enabled' => ['sometimes', 'boolean'],
@@ -81,7 +82,13 @@ class StoreCropRequest extends FormRequest
     /** @return array<string, string> */
     public function messages(): array
     {
+        $colorMessage = app()->getLocale() === 'hi'
+            ? 'फसल का रंग एक वैध छह अंकों वाला हेक्साडेसिमल रंग कोड होना चाहिए, जैसे #FFC107।'
+            : 'The crop color must be a valid six-digit hexadecimal color code, such as #FFC107.';
+
         return [
+            'crop_color.regex' => $colorMessage,
+            'crop_color.max' => $colorMessage,
             'translations.en.name.required' => 'The English crop name is required.',
             'translations.hi.name.required' => 'The Hindi crop name is required.',
             'slug.required' => 'Supply a slug or an English crop name that can generate a slug.',

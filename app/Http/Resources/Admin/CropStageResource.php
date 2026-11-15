@@ -15,6 +15,7 @@ class CropStageResource extends JsonResource
             'id' => $this->id,
             'crop_id' => $this->crop_id,
             'crop_name' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->translatedName(config('languages.default'))),
+            'crop_color' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->crop_color),
             'code' => $this->code,
             'sequence' => $this->sequence,
             'is_active' => $this->is_active,

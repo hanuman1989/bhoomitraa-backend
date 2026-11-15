@@ -22,6 +22,7 @@ class CropResource extends JsonResource
             'slug' => $this->slug,
             'scientific_name' => $this->scientific_name,
             'crop_code' => $this->crop_code,
+            'crop_color' => $this->crop_color,
             'image_url' => $this->image === null ? null : Storage::disk(config('filesystems.crop_images_disk'))->url($this->image),
             'is_active' => $this->is_active,
             'ai_diagnosis_enabled' => $this->ai_diagnosis_enabled,

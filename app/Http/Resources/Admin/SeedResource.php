@@ -26,6 +26,7 @@ class SeedResource extends JsonResource
             'description' => $this->when($detail, fn (): ?string => $translation?->description),
             'planting_instructions' => $this->when($detail, fn (): ?string => $translation?->planting_instructions),
             'crop_name' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->translatedName()),
+            'crop_color' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->crop_color),
             'crop_variety_name' => $this->whenLoaded('cropVariety', fn (): ?string => $this->cropVariety?->translatedName()),
             'source_id' => $this->source_id,
             'source' => $this->whenLoaded('knowledgeSource', fn (): ?array => $this->knowledgeSource === null ? null : [

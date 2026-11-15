@@ -21,9 +21,10 @@ class CropSeedRateResource extends JsonResource
             'spacing_row_cm' => $this->spacing_row_cm, 'spacing_plant_cm' => $this->spacing_plant_cm,
             'region_scope' => $this->region_scope, 'source_id' => $this->source_id, 'notes' => $this->notes, 'is_active' => $this->is_active,
             'crop_name' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->translatedName()),
+            'crop_color' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->crop_color),
             'crop_variety_name' => $this->whenLoaded('cropVariety', fn (): ?string => $this->cropVariety?->translatedName()),
             'season_name' => $this->whenLoaded('season', fn (): ?string => $this->season?->translatedName()),
-            'crop' => $this->whenLoaded('crop', fn (): ?array => $this->crop === null ? null : ['id' => $this->crop->id, 'name' => $this->crop->translatedName()]),
+            'crop' => $this->whenLoaded('crop', fn (): ?array => $this->crop === null ? null : ['id' => $this->crop->id, 'name' => $this->crop->translatedName(), 'crop_color' => $this->crop->crop_color]),
             'crop_variety' => $this->whenLoaded('cropVariety', fn (): ?array => $this->cropVariety === null ? null : ['id' => $this->cropVariety->id, 'name' => $this->cropVariety->translatedName()]),
             'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : ['id' => $this->season->id, 'name' => $this->season->translatedName()]),
             'seed' => $this->whenLoaded('seed', fn (): ?array => $this->seed === null ? null : [

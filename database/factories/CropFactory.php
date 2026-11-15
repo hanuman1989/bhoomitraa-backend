@@ -18,10 +18,16 @@ class CropFactory extends Factory
             'slug' => fake()->unique()->slug(),
             'scientific_name' => null,
             'crop_code' => null,
+            'crop_color' => null,
             'image' => null,
             'is_active' => false,
             'ai_diagnosis_enabled' => false,
         ];
+    }
+
+    public function withColor(?string $color = null): static
+    {
+        return $this->state(['crop_color' => $color ?? fake()->hexColor()]);
     }
 
     public function withNames(string $english = 'Wheat', string $hindi = 'गेहूं'): static

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
@@ -27,7 +28,6 @@ class CropVariety extends Model
         'variety_code',
         'maturity_days_min',
         'maturity_days_max',
-        'source_id',
         'is_active',
     ];
 
@@ -43,7 +43,6 @@ class CropVariety extends Model
             'crop_id' => 'integer',
             'maturity_days_min' => 'integer',
             'maturity_days_max' => 'integer',
-            'source_id' => 'integer',
             'is_active' => 'boolean',
         ];
     }
@@ -78,9 +77,14 @@ class CropVariety extends Model
         return $this->hasMany(FertilizerRecommendation::class);
     }
 
-    public function source(): BelongsTo
+    public function knowledgeSources(): BelongsToMany
     {
-        return $this->belongsTo(KnowledgeSource::class, 'source_id');
+        return $this->belongsToMany(
+            KnowledgeSource::class,
+            'crop_variety_sources',
+            'crop_variety_id',
+            'source_id',
+        )->withTimestamps();
     }
 
     public function translatedName(?string $locale = null): ?string
@@ -148,14 +152,18 @@ class CropVariety extends Model
             return $errors;
         }
 
-        $sourceQuery = KnowledgeSource::query()->whereKey($this->source_id);
+        $sourceIds = $this->knowledgeSources()->pluck('knowledge_sources.id');
+        if ($this->source_id !== null && ! $sourceIds->contains((int) $this->source_id)) {
+            $sourceIds->push((int) $this->source_id);
+        }
+
+        $sourceQuery = KnowledgeSource::query()->whereIn('id', $sourceIds->all());
         if ($lockRelationships) {
             $sourceQuery->lockForUpdate();
         }
-        $source = $sourceQuery->first();
 
-        if ($source === null || ! $source->is_active || $source->verification_status !== 'verified') {
-            $errors['source_id'] = ['An active, verified knowledge source is required to publish maturity information.'];
+        if (! $sourceQuery->where('is_active', true)->where('verification_status', 'verified')->exists()) {
+            $errors['knowledge_sources'] = ['An active, verified knowledge source is required to publish maturity information.'];
         }
 
         return $errors;

@@ -26,6 +26,7 @@ class SeedLotResource extends JsonResource
                 'id' => $this->seed->id, 'name' => $this->seed->translation()?->name, 'sku' => $this->seed->sku,
                 'material_type' => $this->seed->material_type, 'is_active' => $this->seed->is_active, 'setup_status' => $this->seed->setup_status,
                 'crop_id' => $this->seed->crop_id, 'crop_name' => $this->seed->crop?->translatedName(),
+                'crop_color' => $this->seed->crop?->crop_color,
                 'crop_variety_id' => $this->seed->crop_variety_id, 'crop_variety_name' => $this->seed->cropVariety?->translatedName(),
                 'primary_image' => $this->seed->primaryImage === null ? null : new SeedImageResource($this->seed->primaryImage),
             ]),

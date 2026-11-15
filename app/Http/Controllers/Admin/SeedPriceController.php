@@ -186,7 +186,7 @@ class SeedPriceController extends Controller
         $names = static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
             ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
         $relations = ['seed:id,crop_id,crop_variety_id,sku,material_type,default_unit_code,reference_pack_quantity,reference_pack_unit_code,is_active,setup_status',
-            'seed.translations' => $names, 'seed.crop:id', 'seed.crop.translations' => $names,
+            'seed.translations' => $names, 'seed.crop:id,crop_color', 'seed.crop.translations' => $names,
             'seed.cropVariety:id', 'seed.cropVariety.translations' => $names, 'seed.primaryImage',
             'knowledgeSource:id,title,publisher,source_type,source_url,reference_identifier',
             'knowledgeSource.translations' => static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)->select(['id', 'knowledge_source_id', 'locale', 'title'])];

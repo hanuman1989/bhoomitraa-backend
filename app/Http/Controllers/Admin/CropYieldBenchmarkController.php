@@ -182,7 +182,7 @@ class CropYieldBenchmarkController extends Controller
         $names = static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
             ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
         $relations = [
-            'crop:id', 'crop.translations' => $names, 'cropVariety:id', 'cropVariety.translations' => $names,
+            'crop:id,crop_color', 'crop.translations' => $names, 'cropVariety:id', 'cropVariety.translations' => $names,
             'season:id', 'season.translations' => $names,
             'knowledgeSource:id,title,publisher,source_type,source_url,reference_identifier',
             'knowledgeSource.translations' => static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)->select(['id', 'knowledge_source_id', 'locale', 'title']),

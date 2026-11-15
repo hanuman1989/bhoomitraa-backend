@@ -188,7 +188,7 @@ class CropSeedRateController extends Controller
         $names = static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
             ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
         $relations = [
-            'crop:id', 'crop.translations' => $names, 'cropVariety:id', 'cropVariety.translations' => $names,
+            'crop:id,crop_color', 'crop.translations' => $names, 'cropVariety:id', 'cropVariety.translations' => $names,
             'season:id', 'season.translations' => $names,
             'seed:id,crop_id,crop_variety_id,sku,material_type,default_unit_code,reference_pack_quantity,reference_pack_unit_code',
             'seed.translations' => $names, 'seed.primaryImage',

@@ -18,6 +18,8 @@ class CropStageTimelineResource extends JsonResource
             'crop_id' => $this->whenLoaded('cropStage', fn (): ?int => $this->cropStage?->crop_id),
             'crop_name' => $this->whenLoaded('cropStage', fn (): ?string => $this->cropStage?->relationLoaded('crop')
                 ? $this->cropStage->crop?->translatedName($locale) : null),
+            'crop_color' => $this->whenLoaded('cropStage', fn (): ?string => $this->cropStage?->relationLoaded('crop')
+                ? $this->cropStage->crop?->crop_color : null),
             'crop_stage_id' => $this->crop_stage_id,
             'crop_stage_name' => $this->whenLoaded('cropStage', fn (): ?string => $this->cropStage?->translatedName($locale)),
             'crop_variety_id' => $this->crop_variety_id,

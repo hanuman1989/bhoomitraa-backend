@@ -21,7 +21,7 @@ class Crop extends Model
     public const REQUIRED_LOCALES = ['en', 'hi'];
 
     /** @var list<string> */
-    protected $fillable = ['category_id', 'slug', 'scientific_name', 'crop_code', 'is_active', 'ai_diagnosis_enabled'];
+    protected $fillable = ['category_id', 'slug', 'scientific_name', 'crop_code', 'crop_color', 'is_active', 'ai_diagnosis_enabled'];
 
     /** @var list<string> */
     protected $hidden = ['image'];

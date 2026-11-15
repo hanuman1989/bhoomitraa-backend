@@ -96,7 +96,7 @@ test('admins create an inactive growth stage with typed relationships and standa
 
     expect(array_keys($response->json()))->toBe(['status', 'data', 'pagination', 'message']);
     expect(array_keys($response->json('data')))->toBe([
-        'id', 'crop_id', 'crop_name', 'code', 'sequence', 'is_active', 'name', 'translations', 'created_at', 'updated_at', 'added_at',
+        'id', 'crop_id', 'crop_name', 'crop_color', 'code', 'sequence', 'is_active', 'name', 'translations', 'created_at', 'updated_at', 'added_at',
     ]);
     expect(array_keys($response->json('data.translations.en')))->toBe(['locale', 'name', 'description']);
     $stage = CropStage::query()->sole();

@@ -11,6 +11,13 @@ use Illuminate\Validation\Validator;
 
 class StoreCropVarietyRequest extends FormRequest
 {
+    protected function prepareForValidation(): void
+    {
+        if ($this->filled('source_id') && ! $this->has('knowledge_sources')) {
+            $this->merge(['knowledge_sources' => [$this->input('source_id')]]);
+        }
+    }
+
     public function authorize(): bool
     {
         return $this->user()?->can('manage-crops') ?? false;
@@ -29,6 +36,8 @@ class StoreCropVarietyRequest extends FormRequest
                 Rule::unique('crop_varieties', 'variety_code')->where('crop_id', $this->input('crop_id'))],
             'maturity_days_min' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'maturity_days_max' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'knowledge_sources' => ['sometimes', 'array', 'list'],
+            'knowledge_sources.*' => ['required', 'integer', 'distinct', Rule::exists('knowledge_sources', 'id')],
             'source_id' => ['sometimes', 'nullable', 'integer', Rule::exists('knowledge_sources', 'id')],
             'is_active' => ['sometimes', 'boolean'],
             'translations' => ['required', 'array:'.$locales],
@@ -47,7 +56,7 @@ class StoreCropVarietyRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
-            $allowed = [...(new CropVariety)->getFillable(), 'translations', '_method'];
+            $allowed = [...(new CropVariety)->getFillable(), 'translations', 'knowledge_sources', 'source_id', '_method'];
             foreach (array_diff(array_keys($this->all()), $allowed) as $field) {
                 $validator->errors()->add($field, 'The '.$field.' field is not allowed.');
             }
@@ -75,9 +84,14 @@ class StoreCropVarietyRequest extends FormRequest
                 return;
             }
 
-            $source = KnowledgeSource::query()->find($this->integer('source_id'));
-            if ($source === null || ! $source->is_active || $source->verification_status !== 'verified') {
-                $validator->errors()->add('source_id', 'An active, verified knowledge source is required to publish maturity information.');
+            $sourceIds = collect($this->input('knowledge_sources', []))->filter(fn (mixed $value): bool => is_int($value) || ctype_digit((string) $value))->map(fn (mixed $value): int => (int) $value)->values()->all();
+            if ($this->filled('source_id') && $sourceIds === []) {
+                $sourceIds = [(int) $this->input('source_id')];
+            }
+
+            if ($sourceIds === [] || ! KnowledgeSource::query()->whereIn('id', $sourceIds)->where('is_active', true)->where('verification_status', 'verified')->exists()) {
+                $field = $this->has('knowledge_sources') ? 'knowledge_sources' : 'source_id';
+                $validator->errors()->add($field, 'An active, verified knowledge source is required to publish maturity information.');
             }
         }];
     }

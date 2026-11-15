@@ -26,6 +26,7 @@ class SeedPriceResource extends JsonResource
             'seed' => $this->whenLoaded('seed', fn (): ?array => $this->seed === null ? null : [
                 'id' => $this->seed->id, 'name' => $this->seed->translation()?->name, 'sku' => $this->seed->sku, 'material_type' => $this->seed->material_type,
                 'crop_id' => $this->seed->crop_id, 'crop_name' => $this->seed->crop?->translatedName(),
+                'crop_color' => $this->seed->crop?->crop_color,
                 'crop_variety_id' => $this->seed->crop_variety_id, 'crop_variety_name' => $this->seed->cropVariety?->translatedName(),
                 'default_unit_code' => $this->seed->default_unit_code, 'reference_pack_quantity' => $this->seed->reference_pack_quantity,
                 'reference_pack_unit_code' => $this->seed->reference_pack_unit_code,

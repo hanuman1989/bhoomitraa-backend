@@ -16,12 +16,12 @@ class CropVarietyResource extends JsonResource
             'crop_name' => $this->whenLoaded('crop', fn (): ?string => $this->getAttribute('localized_crop_name')
                 ?? $this->crop?->translatedName()),
             'crop_slug' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->slug),
+            'crop_color' => $this->whenLoaded('crop', fn (): ?string => $this->crop?->crop_color),
             'slug' => $this->slug,
             'variety_code' => $this->variety_code,
             'maturity_days_min' => $this->maturity_days_min,
             'maturity_days_max' => $this->maturity_days_max,
-            'source_id' => $this->source_id,
-            'source_title' => $this->whenLoaded('source', fn (): ?string => $this->source?->title),
+            'knowledge_sources' => KnowledgeSourceResource::collection($this->whenLoaded('knowledgeSources')),
             'is_active' => $this->is_active,
             'name' => $this->resource->getAttribute('localized_name')
                 ?? $this->whenLoaded('translations', fn (): ?string => $this->resource->translatedName(), null),

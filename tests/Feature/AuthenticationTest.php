@@ -17,7 +17,7 @@ test('login database lookup failures return a safe 500 and are reported', functi
     Schema::drop((new $model)->getTable());
     Exceptions::fake();
 
-    $response = $this->postJson($prefix.'/login', ['email' => 'user@example.com', 'mobile' => '9876543210', 'password' => 'password']);
+    $response = $this->postJson($prefix.'/login', ['email' => 'user@example.com', 'login' => '9876543210', 'password' => 'password']);
 
     $response->assertInternalServerError()->assertExactJson([
         'status' => false, 'data' => null,
@@ -36,7 +36,7 @@ test('failed token creation returns 500 and issues no login token', function (st
     DB::unprepared("CREATE TRIGGER fail_token_insert BEFORE INSERT ON personal_access_tokens BEGIN SELECT RAISE(ABORT, 'internal database failure'); END");
     Exceptions::fake();
 
-    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'password']);
+    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'login' => $account->mobile, 'password' => 'password']);
 
     $response->assertInternalServerError()->assertJsonPath('status', false)->assertJsonPath('data', null)->assertJsonPath('message', 'Unable to log in. Please try again later.');
     $this->assertDatabaseCount('personal_access_tokens', 0);
@@ -67,7 +67,7 @@ test('login issues a scoped bearer token and hides sensitive account fields', fu
     $account = $model::factory()->create();
 
     $response = $this->postJson($prefix.'/login', [
-        'email' => $account->email, 'mobile' => $account->mobile,
+        'email' => $account->email, 'login' => $account->mobile,
         'password' => 'password',
         'device_name' => 'test-client',
         'abilities' => ['*'],
@@ -142,7 +142,7 @@ test('a token for the other account model receives 401 even with wildcard abilit
 test('login rejects credentials from the other table with 401', function (string $sourceModel, string $targetPrefix) {
     $account = $sourceModel::factory()->create(['mobile' => '9876543210']);
 
-    $response = $this->postJson($targetPrefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'password']);
+    $response = $this->postJson($targetPrefix.'/login', ['email' => $account->email, 'login' => $account->mobile, 'password' => 'password']);
 
     $response->assertUnauthorized()->assertJsonPath('status', false);
     $this->assertDatabaseCount('personal_access_tokens', 0);
@@ -154,7 +154,7 @@ test('login rejects credentials from the other table with 401', function (string
 test('login rejects an incorrect password with 401 and issues no tokens', function (string $model, string $prefix) {
     $account = $model::factory()->create();
 
-    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'wrong-password']);
+    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'login' => $account->mobile, 'password' => 'wrong-password']);
 
     $response->assertUnauthorized()->assertJsonPath('data', null);
     $this->assertDatabaseCount('personal_access_tokens', 0);
@@ -176,7 +176,7 @@ test('login rejects invalid stored password hashes with 401 and creates no token
     $account = $model::factory()->create();
     DB::table($account->getTable())->where('id', $account->id)->update(['password' => $storedPassword]);
 
-    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'mobile' => $account->mobile, 'password' => 'password']);
+    $response = $this->postJson($prefix.'/login', ['email' => $account->email, 'login' => $account->mobile, 'password' => 'password']);
 
     $response->assertUnauthorized()
         ->assertJsonPath('status', false)

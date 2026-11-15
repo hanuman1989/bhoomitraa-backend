@@ -30,6 +30,9 @@ class UpdateCropVarietyRequest extends StoreCropVarietyRequest
             Rule::unique('crop_varieties', 'slug')->where('crop_id', $cropId)->ignore($cropVariety)];
         $rules['variety_code'] = ['sometimes', 'nullable', 'string', 'max:50',
             Rule::unique('crop_varieties', 'variety_code')->where('crop_id', $cropId)->ignore($cropVariety)];
+        $rules['knowledge_sources'] = ['sometimes', 'array', 'list'];
+        $rules['knowledge_sources.*'] = ['required', 'integer', 'distinct', Rule::exists('knowledge_sources', 'id')];
+        $rules['source_id'] = ['sometimes', 'nullable', 'integer', Rule::exists('knowledge_sources', 'id')];
         $rules['translations.*.name'] = ['sometimes', 'required', 'string', 'max:255'];
         $rules['translations.en'] = ['sometimes', 'required', 'array:name,description,region_notes'];
         $rules['translations.hi'] = ['sometimes', 'required', 'array:name,description,region_notes'];
@@ -49,7 +52,7 @@ class UpdateCropVarietyRequest extends StoreCropVarietyRequest
                     return;
                 }
 
-                $allowed = [...$cropVariety->getFillable(), 'translations', '_method'];
+                $allowed = [...$cropVariety->getFillable(), 'translations', 'knowledge_sources', 'source_id', '_method'];
                 foreach (array_diff(array_keys($this->all()), $allowed) as $field) {
                     $validator->errors()->add($field, 'The '.$field.' field is not allowed.');
                 }

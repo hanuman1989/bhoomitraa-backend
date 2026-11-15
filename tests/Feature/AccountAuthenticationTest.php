@@ -10,11 +10,11 @@ use Laravel\Sanctum\PersonalAccessToken;
 
 uses(LazilyRefreshDatabase::class);
 
-test('active farmers log in with their existing mobile format and receive a scoped expiring bearer token', function (string $mobile) {
+test('active farmers log in with email or Indian mobile and receive the same scoped expiring bearer token', function (string $login, string $mobile, ?string $email) {
     $this->travelTo('2026-11-08 12:00:00');
-    $farmer = User::factory()->create(['first_name' => 'Hanuman', 'last_name' => 'Sharma', 'mobile' => $mobile]);
+    $farmer = User::factory()->create(['first_name' => 'Hanuman', 'last_name' => 'Sharma', 'mobile' => $mobile, 'email' => $email]);
     $response = $this->postJson('/api/account/login', [
-        'mobile' => $mobile, 'password' => 'password', 'device_name' => 'farmer-phone',
+        'login' => $login, 'password' => 'password', 'device_name' => 'farmer-phone',
         'abilities' => ['admin', '*'], 'status' => false, 'last_login_at' => '2000-01-01 00:00:00',
     ])->assertOk()->assertJsonPath('status', true)->assertJsonPath('pagination', null)
         ->assertJsonPath('data.user.id', $farmer->id)->assertJsonPath('data.user.first_name', 'Hanuman')
@@ -32,14 +32,23 @@ test('active farmers log in with their existing mobile format and receive a scop
     expect($token->expires_at->toISOString())->toBe('2026-11-09T12:00:00.000000Z');
     $this->assertDatabaseHas('users', ['id' => $farmer->id, 'status' => true, 'last_login_at' => '2026-11-08 12:00:00']);
     $this->withToken($response->json('data.access_token'))->getJson('/api/account/me')->assertOk()->assertJsonPath('data.id', $farmer->id);
-})->with(['local string' => '9876543210', 'leading zeros' => '00919876543210', 'country prefix' => '+919876543210']);
+    $this->postJson('/api/account/logout')->assertOk();
+    app('auth')->forgetGuards();
+    $this->withToken($response->json('data.access_token'))->getJson('/api/account/me')->assertUnauthorized();
+})->with([
+    'mobile' => ['9876543210', '9876543210', 'farmer@example.com'],
+    'mobile starting six' => ['6876543210', '6876543210', 'farmer@example.com'],
+    'trimmed mobile without email' => [' 9876543210 ', '9876543210', null],
+    'email' => ['farmer@example.com', '9876543210', 'farmer@example.com'],
+    'normalized email' => [' FARMER@EXAMPLE.COM ', '9876543210', 'farmer@example.com'],
+]);
 
-test('failed farmer logins share a generic 401 and do not issue tokens or update last login', function (string $kind) {
-    $farmer = User::factory()->create();
-    $mobile = $farmer->mobile;
+test('failed farmer logins share a generic 401 and do not issue tokens or update last login', function (string $kind, string $column) {
+    $farmer = User::factory()->create(['email' => 'farmer@example.com', 'mobile' => '9876543210']);
+    $login = $farmer->{$column};
     $password = 'password';
-    if ($kind === 'unknown mobile') {
-        $mobile = '0000000000';
+    if ($kind === 'unknown') {
+        $login = $column === 'email' ? 'unknown@example.com' : '9876543211';
     } elseif ($kind === 'wrong password') {
         $password = 'incorrect';
     } elseif ($kind === 'inactive') {
@@ -48,45 +57,60 @@ test('failed farmer logins share a generic 401 and do not issue tokens or update
         $farmer->delete();
     }
 
-    $this->postJson('/api/account/login', ['mobile' => $mobile, 'password' => $password])->assertUnauthorized()->assertExactJson([
+    $this->postJson('/api/account/login', ['login' => $login, 'password' => $password])->assertUnauthorized()->assertExactJson([
         'status' => false, 'data' => null, 'pagination' => null, 'message' => 'Invalid credentials or inactive account.',
     ]);
     $this->assertDatabaseCount('personal_access_tokens', 0);
     expect(User::withTrashed()->findOrFail($farmer->id)->last_login_at)->toBeNull();
-})->with(['unknown mobile', 'wrong password', 'inactive', 'deleted']);
+})->with([
+    'unknown mobile' => ['unknown', 'mobile'], 'unknown email' => ['unknown', 'email'],
+    'wrong mobile password' => ['wrong password', 'mobile'], 'wrong email password' => ['wrong password', 'email'],
+    'inactive mobile' => ['inactive', 'mobile'], 'inactive email' => ['inactive', 'email'],
+    'deleted mobile' => ['deleted', 'mobile'], 'deleted email' => ['deleted', 'email'],
+]);
 
-test('farmer login validates mobile password and optional device names using nested API errors', function (array $override, string $field) {
-    $response = $this->postJson('/api/account/login', array_replace(['mobile' => '9876543210', 'password' => 'password'], $override))
+test('farmer login validates login password and optional device names using the existing API errors', function (array $override, string $field) {
+    $response = $this->postJson('/api/account/login', array_replace(['login' => '9876543210', 'password' => 'password'], $override))
         ->assertUnprocessable()->assertJsonPath('status', false)->assertJsonPath('data', null)->assertJsonPath('pagination', null)
         ->assertJsonValidationErrors($field);
     expect(array_keys($response->json()))->toBe(['status', 'data', 'pagination', 'message', 'errors']);
     $this->assertDatabaseCount('personal_access_tokens', 0);
 })->with([
-    'empty mobile' => [['mobile' => ''], 'mobile'], 'null mobile' => [['mobile' => null], 'mobile'],
-    'numeric mobile' => [['mobile' => 9876543210], 'mobile'], 'array mobile' => [['mobile' => ['9876543210']], 'mobile'],
-    'long mobile' => [['mobile' => str_repeat('9', 31)], 'mobile'],
+    'empty login' => [['login' => ''], 'login'], 'null login' => [['login' => null], 'login'],
+    'numeric login' => [['login' => 9876543210], 'login'], 'array login' => [['login' => ['9876543210']], 'login'],
+    'long login' => [['login' => str_repeat('a', 256)], 'login'],
+    'invalid email' => [['login' => 'farmer@invalid'], 'login'],
+    'short mobile' => [['login' => '987654321'], 'login'], 'long mobile' => [['login' => '98765432100'], 'login'],
+    'wrong mobile prefix' => [['login' => '1234567890'], 'login'], 'country prefix' => [['login' => '+919876543210'], 'login'],
+    'leading zeros' => [['login' => '00919876543210'], 'login'], 'internal spaces' => [['login' => '98765 43210'], 'login'],
+    'letters' => [['login' => '987654321a'], 'login'],
     'empty password' => [['password' => ''], 'password'], 'null password' => [['password' => null], 'password'],
     'array password' => [['password' => ['password']], 'password'], 'long password' => [['password' => str_repeat('a', 256)], 'password'],
     'empty device' => [['device_name' => ''], 'device_name'], 'array device' => [['device_name' => ['phone']], 'device_name'],
     'long device' => [['device_name' => str_repeat('a', 256)], 'device_name'],
 ]);
 
-test('email credentials cannot substitute for the required mobile login field', function () {
-    $farmer = User::factory()->create();
-    $this->post('/api/account/login', ['email' => $farmer->email, 'password' => 'password'])
-        ->assertUnprocessable()->assertJsonValidationErrors('mobile');
+test('login and password are required', function () {
+    $this->post('/api/account/login', [])->assertUnprocessable()->assertJsonValidationErrors(['login', 'password']);
     $this->assertDatabaseCount('personal_access_tokens', 0);
 });
+
+test('legacy credential fields cannot substitute for login', function (string $field) {
+    $farmer = User::factory()->create();
+    $this->post('/api/account/login', [$field => $farmer->{$field}, 'password' => 'password'])
+        ->assertUnprocessable()->assertJsonValidationErrors('login');
+    $this->assertDatabaseCount('personal_access_tokens', 0);
+})->with(['email', 'mobile']);
 
 test('farmer and admin passwords remain isolated even when public account identifiers coincide', function () {
     $admin = AdminUser::factory()->create(['email' => 'shared@example.com', 'mobile' => '9876543210', 'password' => 'admin-password']);
     $farmer = User::factory()->create(['id' => $admin->id, 'email' => $admin->email, 'mobile' => $admin->mobile, 'password' => 'farmer-password']);
 
-    $this->postJson('/api/account/login', ['mobile' => $farmer->mobile, 'password' => 'admin-password'])->assertUnauthorized();
+    $this->postJson('/api/account/login', ['login' => $farmer->mobile, 'password' => 'admin-password'])->assertUnauthorized();
     $this->postJson('/api/admin/login', ['email' => $admin->email, 'password' => 'farmer-password'])->assertUnauthorized();
     $this->assertDatabaseCount('personal_access_tokens', 0);
     expect($farmer->fresh()->last_login_at)->toBeNull();
-    $this->postJson('/api/account/login', ['mobile' => $farmer->mobile, 'password' => 'farmer-password'])->assertOk()->assertJsonPath('data.user.id', $farmer->id);
+    $this->postJson('/api/account/login', ['login' => $farmer->mobile, 'password' => 'farmer-password'])->assertOk()->assertJsonPath('data.user.id', $farmer->id);
     $this->postJson('/api/admin/login', ['email' => $admin->email, 'password' => 'admin-password'])->assertOk()->assertJsonPath('data.admin_user.id', $admin->id);
 });
 
@@ -167,7 +191,7 @@ test('login timestamp failures roll back token creation and preserve the previou
     Exceptions::fake();
     DB::unprepared("CREATE TRIGGER fail_farmer_login_update BEFORE UPDATE ON users BEGIN SELECT RAISE(ABORT, 'Simulated login timestamp failure'); END");
     try {
-        $response = $this->postJson('/api/account/login', ['mobile' => $farmer->mobile, 'password' => 'password'])->assertInternalServerError()
+        $response = $this->postJson('/api/account/login', ['login' => $farmer->mobile, 'password' => 'password'])->assertInternalServerError()
             ->assertJsonPath('status', false)->assertJsonPath('data', null)->assertJsonPath('pagination', null)
             ->assertJsonPath('message', 'Unable to log in. Please try again later.');
         expect($response->getContent())->not->toContain('Simulated login timestamp failure', 'SQLSTATE', 'password');
@@ -179,29 +203,41 @@ test('login timestamp failures roll back token creation and preserve the previou
     }
 });
 
-test('farmer login throttles each mobile separately and returns retry headers', function () {
+test('farmer login throttles each identifier separately and normalizes email keys', function (string $login, string $sameLogin, string $otherLogin) {
     for ($attempt = 0; $attempt < 5; $attempt++) {
-        $this->postJson('/api/account/login', ['mobile' => '9876543210', 'password' => 'invalid'])->assertUnauthorized();
+        $this->postJson('/api/account/login', ['login' => $login, 'password' => 'invalid'])->assertUnauthorized();
     }
-    $this->postJson('/api/account/login', ['mobile' => '9876543210', 'password' => 'invalid'])
+    $this->postJson('/api/account/login', ['login' => $sameLogin, 'password' => 'invalid'])
         ->assertTooManyRequests()->assertHeader('Retry-After')->assertJsonPath('message', 'Too many requests. Please try again later.');
-    $this->postJson('/api/account/login', ['mobile' => '9876543211', 'password' => 'invalid'])->assertUnauthorized();
-});
+    $this->postJson('/api/account/login', ['login' => $otherLogin, 'password' => 'invalid'])->assertUnauthorized();
+})->with([
+    'mobile' => ['9876543210', '9876543210', '9876543211'],
+    'email' => [' FARMER@EXAMPLE.COM ', 'farmer@example.com', 'other@example.com'],
+]);
 
 test('the shared login IP limit prevents bypassing limits with different mobile numbers', function () {
     for ($attempt = 0; $attempt < 30; $attempt++) {
-        $this->postJson('/api/account/login', ['mobile' => sprintf('%010d', $attempt), 'password' => 'invalid'])->assertUnauthorized();
+        $this->postJson('/api/account/login', ['login' => sprintf('9%09d', $attempt), 'password' => 'invalid'])->assertUnauthorized();
     }
-    $this->postJson('/api/account/login', ['mobile' => '9999999999', 'password' => 'invalid'])
+    $this->postJson('/api/account/login', ['login' => '9999999999', 'password' => 'invalid'])
         ->assertTooManyRequests()->assertHeader('Retry-After')->assertJsonPath('status', false);
 });
 
-test('mobile lookup binds input instead of interpreting SQL fragments', function () {
+test('invalid login formats are rejected before a user database lookup', function (string $login) {
     $farmer = User::factory()->create();
-    $this->postJson('/api/account/login', ['mobile' => "' OR 1=1 --", 'password' => 'password'])->assertUnauthorized();
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    try {
+        $this->postJson('/api/account/login', ['login' => $login, 'password' => 'password'])
+            ->assertUnprocessable()->assertJsonValidationErrors(['login' => 'The login field must be a valid email address or a 10-digit Indian mobile number.']);
+        $userQueries = collect(DB::getQueryLog())->filter(fn (array $query): bool => preg_match('/from\\s+[`"]?users\\b/i', $query['query']) === 1);
+        expect($userQueries)->toHaveCount(0);
+    } finally {
+        DB::disableQueryLog();
+    }
     expect($farmer->fresh()->last_login_at)->toBeNull();
     $this->assertDatabaseCount('personal_access_tokens', 0);
-});
+})->with(["' OR 1=1 --", 'invalid-email@', '1234567890', '+919876543210']);
 
 test('farmer authentication endpoints are confined to the account prefix', function (string $method, string $path) {
     $this->json($method, $path)->assertNotFound()->assertJsonPath('message', 'Resource not found.');

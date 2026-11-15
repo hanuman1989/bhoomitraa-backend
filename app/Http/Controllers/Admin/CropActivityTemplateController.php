@@ -224,7 +224,7 @@ class CropActivityTemplateController extends Controller
         $names = static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
             ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
         $relations = [
-            'crop:id', 'crop.translations' => $names,
+            'crop:id,crop_color', 'crop.translations' => $names,
             'cropVariety:id', 'cropVariety.translations' => $names,
             'category:id', 'category.translations' => $names,
             'cropStage:id', 'cropStage.translations' => $names,

@@ -227,7 +227,7 @@ class SeedLotController extends Controller
             ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
 
         return ['seed:id,crop_id,crop_variety_id,sku,material_type,is_active,setup_status,deleted_at',
-            'seed.translations' => $names, 'seed.crop:id', 'seed.crop.translations' => $names,
+            'seed.translations' => $names, 'seed.crop:id,crop_color', 'seed.crop.translations' => $names,
             'seed.cropVariety:id', 'seed.cropVariety.translations' => $names, 'seed.primaryImage',
             'verifier:id,first_name,last_name'];
     }
