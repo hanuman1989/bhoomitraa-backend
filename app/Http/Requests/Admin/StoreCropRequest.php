@@ -41,6 +41,7 @@ class StoreCropRequest extends FormRequest
             'image' => ['sometimes', 'nullable', File::image()->types(['jpg', 'jpeg', 'png', 'webp'])->extensions(['jpg', 'jpeg', 'png', 'webp'])->max('5mb')],
             'is_active' => ['sometimes', 'boolean'],
             'ai_diagnosis_enabled' => ['sometimes', 'boolean'],
+            'is_recommendate' => ['sometimes', 'boolean'],
             'translations' => ['required', 'array:'.implode(',', array_keys(config('languages.supported'))), 'min:1'],
             'translations.*' => ['required', 'array:name,description'],
             'translations.*.name' => ['required', 'string', 'max:255'],

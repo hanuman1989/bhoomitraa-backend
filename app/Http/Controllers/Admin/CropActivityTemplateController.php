@@ -228,7 +228,7 @@ class CropActivityTemplateController extends Controller
             'cropVariety:id', 'cropVariety.translations' => $names,
             'category:id', 'category.translations' => $names,
             'cropStage:id', 'cropStage.translations' => $names,
-            'season:id', 'season.translations' => $names,
+            'season:id,slug,start_month,end_month,icon', 'season.translations' => $names,
             'source:id,title,publisher,source_type,source_url,language,reference_identifier,is_active,verification_status',
             'source.translations' => static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
                 ->select(['id', $translations->getForeignKeyName(), 'locale', 'title']),

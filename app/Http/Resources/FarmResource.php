@@ -23,7 +23,15 @@ class FarmResource extends JsonResource
             'latitude' => $this->latitude, 'longitude' => $this->longitude,
             'has_boundary' => $this->has_boundary, 'boundary_source' => $this->boundary_source, 'gps_accuracy_m' => $this->gps_accuracy_m,
             'boundary' => $this->when(array_key_exists('boundary_geojson', $this->resource->getAttributes()), fn (): ?array => $this->boundary_geojson),
-            'is_active' => $this->is_active, 'active_crop' => null,
+            'is_active' => $this->is_active,
+            'active_crop' => $this->whenLoaded('activeCrops', fn (): ?array => $this->activeCrops->count() === 1
+                ? ['id' => $this->activeCrops->first()->id, 'crop_id' => $this->activeCrops->first()->crop_id,
+                    'crop_name' => $this->activeCrops->first()->crop?->translatedName()] : null, null),
+            'active_crops_count' => $this->whenCounted('activeCrops'),
+            'active_crops' => $this->whenLoaded('activeCrops', fn (): array => $this->activeCrops->map(fn ($cycle): array => [
+                ...$cycle->only(['id', 'crop_id', 'crop_variety_id', 'cultivated_area', 'area_unit', 'status']),
+                'crop_name' => $cycle->crop?->translatedName(), 'crop_color' => $cycle->crop?->crop_color,
+            ])->all()),
             'created_at' => $this->created_at?->toISOString(), 'updated_at' => $this->updated_at?->toISOString(),
         ];
         if (! $request->routeIs('account.farms.index')) {

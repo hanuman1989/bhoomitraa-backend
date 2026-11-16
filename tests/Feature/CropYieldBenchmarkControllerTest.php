@@ -468,19 +468,19 @@ test('failed district writes roll back both new benchmarks and edited values wit
 test('referenced farmer yield estimates block benchmark deletion and scientific rewrites even with cascade foreign keys', function () {
     $admin = AdminUser::factory()->create();
     $benchmark = CropYieldBenchmark::factory()->inactive()->create();
-    Schema::create('farm_crop_yield_estimates', function (Blueprint $table): void {
+    Schema::create('legacy_farmer_yield_estimates', function (Blueprint $table): void {
         $table->id();
         $table->foreignId('yield_benchmark_id')->constrained('crop_yield_benchmarks')->cascadeOnDelete();
     });
-    DB::table('farm_crop_yield_estimates')->insert(['yield_benchmark_id' => $benchmark->id]);
+    DB::table('legacy_farmer_yield_estimates')->insert(['yield_benchmark_id' => $benchmark->id]);
     try {
         $this->withToken($admin->createToken('test', ['admin'])->plainTextToken)->deleteJson('/api/admin/crop-yield-benchmarks/'.$benchmark->id)->assertConflict();
         $this->patchJson('/api/admin/crop-yield-benchmarks/'.$benchmark->id, ['yield_avg_kg_ha' => '2100'])->assertUnprocessable();
         $this->patchJson('/api/admin/crop-yield-benchmarks/'.$benchmark->id.'/status', ['is_active' => false])->assertOk();
         expect($benchmark->fresh()->yield_avg_kg_ha)->toBe('2000.000');
-        $this->assertDatabaseCount('farm_crop_yield_estimates', 1);
+        $this->assertDatabaseCount('legacy_farmer_yield_estimates', 1);
     } finally {
-        Schema::dropIfExists('farm_crop_yield_estimates');
+        Schema::dropIfExists('legacy_farmer_yield_estimates');
     }
 });
 

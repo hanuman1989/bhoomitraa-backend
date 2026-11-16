@@ -26,6 +26,7 @@ class CropResource extends JsonResource
             'image_url' => $this->image === null ? null : Storage::disk(config('filesystems.crop_images_disk'))->url($this->image),
             'is_active' => $this->is_active,
             'ai_diagnosis_enabled' => $this->ai_diagnosis_enabled,
+            'is_recommendate' => $this->is_recommendate,
             'name' => array_key_exists('localized_name', $this->resource->getAttributes())
                 ? $this->localized_name : $this->resource->translatedName(),
             'translations' => $this->when($admin && $this->resource->relationLoaded('translations'), fn (): object => (object) $this->translations

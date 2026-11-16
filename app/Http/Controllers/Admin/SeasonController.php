@@ -69,7 +69,7 @@ class SeasonController extends Controller
     public function store(StoreSeasonRequest $request): JsonResponse
     {
         try {
-            $season = $this->saveSeason(new Season, $request->safe()->only('slug'), $request->validated('translations'));
+            $season = $this->saveSeason(new Season, $request->safe()->only(['slug', ...Season::PRESENTATION_FIELDS]), $request->validated('translations'));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to create the season. Please try again later.');
         }
@@ -97,7 +97,7 @@ class SeasonController extends Controller
     public function update(UpdateSeasonRequest $request, Season $season): JsonResponse
     {
         try {
-            $season = $this->saveSeason($season, $request->safe()->only('slug'), $request->validated('translations', []));
+            $season = $this->saveSeason($season, $request->safe()->only(['slug', ...Season::PRESENTATION_FIELDS]), $request->validated('translations', []));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to update the season. Please try again later.');
         }
@@ -184,7 +184,7 @@ class SeasonController extends Controller
     }
 
     /**
-     * @param  array{slug?: string}  $attributes
+     * @param  array{slug?: string, start_month?: int|string|null, end_month?: int|string|null, icon?: string|null}  $attributes
      * @param  array<string, array{name?: string, description?: string|null}>  $translations
      */
     private function saveSeason(Season $season, array $attributes, array $translations): Season
@@ -194,6 +194,10 @@ class SeasonController extends Controller
         return DB::transaction(function () use ($seasonId, $attributes, $translations): Season {
             $season = $seasonId === null ? new Season : Season::query()->lockForUpdate()->findOrFail($seasonId);
             $season->fill($attributes);
+            $errors = $season->presentationErrors();
+            if ($errors !== []) {
+                throw ValidationException::withMessages($errors);
+            }
             if (! $season->exists) {
                 $season->is_active = false;
             }

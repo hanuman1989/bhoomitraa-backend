@@ -3,6 +3,7 @@
 namespace App\Http\Resources\Admin;
 
 use App\Models\Region;
+use App\Models\Season;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -23,7 +24,9 @@ class CropYieldBenchmarkResource extends JsonResource
             'season_name' => $this->whenLoaded('season', fn (): ?string => $this->season?->translatedName()),
             'crop' => $this->whenLoaded('crop', fn (): ?array => $this->crop === null ? null : ['id' => $this->crop->id, 'name' => $this->crop->translatedName(), 'crop_color' => $this->crop->crop_color]),
             'crop_variety' => $this->whenLoaded('cropVariety', fn (): ?array => $this->cropVariety === null ? null : ['id' => $this->cropVariety->id, 'name' => $this->cropVariety->translatedName()]),
-            'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : ['id' => $this->season->id, 'name' => $this->season->translatedName()]),
+            'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : [
+                ...$this->season->only(['id', 'slug', ...Season::PRESENTATION_FIELDS]), 'name' => $this->season->translatedName(),
+            ]),
             'source_title' => $this->whenLoaded('knowledgeSource', fn (): ?string => $this->knowledgeSource?->translatedTitle()),
             'knowledge_source' => $this->whenLoaded('knowledgeSource', fn (): ?array => $this->knowledgeSource === null ? null : [
                 'id' => $this->knowledgeSource->id, 'title' => $this->knowledgeSource->translatedTitle(),

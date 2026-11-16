@@ -247,7 +247,11 @@ class FarmController extends Controller
                     }
                     $record->forceFill($record->calculatedAreaAttributes($squareMetres));
                 }
+                $contextChanged = $record->isDirty(['state_id', 'district_id', 'tehsil_id', 'region_id']);
                 $record->save();
+                if ($contextChanged) {
+                    $record->invalidateCropDrafts();
+                }
 
                 return $request->user('user')->farms()->forApi(true)->findOrFail($farm);
             }, attempts: 3);
@@ -264,7 +268,12 @@ class FarmController extends Controller
         try {
             $record = DB::transaction(function () use ($request, $farm): Farm {
                 $record = $request->user('user')->farms()->lockForUpdate()->findOrFail($farm);
-                $record->update($request->safe()->only(Farm::DETAIL_FIELDS));
+                $record->fill($request->safe()->only(Farm::DETAIL_FIELDS));
+                $contextChanged = $record->isDirty(['soil_type', 'land_type', 'water_availability', 'irrigation_source']);
+                $record->save();
+                if ($contextChanged) {
+                    $record->invalidateCropDrafts();
+                }
 
                 return $request->user('user')->farms()->forApi(true)->findOrFail($farm);
             }, attempts: 3);
@@ -284,6 +293,7 @@ class FarmController extends Controller
             $metrics = $boundary === null ? null : Farm::boundaryMetrics($boundary);
             $record = DB::transaction(function () use ($request, $farm, $input, $boundary, $metrics): Farm {
                 $record = $request->user('user')->farms()->lockForUpdate()->findOrFail($farm);
+                $record->validateActiveCropBoundary($boundary);
                 $record->persistBoundary($boundary, $metrics, $input['boundary_source'] ?? null, $input['gps_accuracy_m'] ?? null);
 
                 return $request->user('user')->farms()->forApi(true)->findOrFail($farm);
@@ -301,6 +311,9 @@ class FarmController extends Controller
         try {
             $record = DB::transaction(function () use ($request, $farm): Farm {
                 $record = $request->user('user')->farms()->lockForUpdate()->findOrFail($farm);
+                if (! $request->boolean('is_active') && $record->cropCycles()->where('status', 'active')->exists()) {
+                    throw ValidationException::withMessages(['is_active' => ['Cancel active crops before deactivating the farm.']]);
+                }
                 $record->is_active = $request->boolean('is_active');
                 $record->save();
 

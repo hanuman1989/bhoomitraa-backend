@@ -63,6 +63,7 @@ class FarmerSmartTimelineGenerator
             'season_name' => $this->name($season, 'season', $warnings),
             'district_name' => $this->name($district, 'region', $warnings),
         ];
+        $selection['season'] = [...$season->only(['id', 'slug', ...Season::PRESENTATION_FIELDS]), 'name' => $selection['season_name']];
         $sowingDate = CarbonImmutable::createFromFormat('!Y-m-d', $input['sowing_date'], 'UTC');
         $maxOffset = (int) $sowingDate->diffInDays(CarbonImmutable::createFromFormat('!Y-m-d', '9999-12-31', 'UTC'));
         $allStages = CropStage::query()->where('crop_id', $input['crop_id'])

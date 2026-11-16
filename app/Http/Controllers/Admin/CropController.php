@@ -31,6 +31,7 @@ class CropController extends Controller
             'category_id' => ['sometimes', 'integer', 'min:1', Rule::exists('crop_categories', 'id')],
             'is_active' => ['sometimes', 'boolean'],
             'ai_diagnosis_enabled' => ['sometimes', 'boolean'],
+            'is_recommendate' => ['sometimes', 'boolean'],
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
@@ -38,7 +39,7 @@ class CropController extends Controller
             $query = Crop::query()->withLocalizedName()
                 ->with(['category.translations' => fn (HasMany $translations): HasMany => $translations
                     ->whereIn('locale', array_unique([app()->getLocale(), config('languages.default')]))]);
-            foreach (['category_id', 'is_active', 'ai_diagnosis_enabled'] as $filter) {
+            foreach (['category_id', 'is_active', 'ai_diagnosis_enabled', 'is_recommendate'] as $filter) {
                 if (array_key_exists($filter, $filters)) {
                     $query->where('crops.'.$filter, $filters[$filter]);
                 }
@@ -56,7 +57,7 @@ class CropController extends Controller
             }
             $crops = $query->orderBy('default_translation.name')->orderBy('crops.id')
                 ->paginate($request->integer('per_page', 15))->appends($request->only([
-                    'keyword', 'category_id', 'is_active', 'ai_diagnosis_enabled', 'per_page',
+                    'keyword', 'category_id', 'is_active', 'ai_diagnosis_enabled', 'is_recommendate', 'per_page',
                 ]));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to retrieve crops. Please try again later.');

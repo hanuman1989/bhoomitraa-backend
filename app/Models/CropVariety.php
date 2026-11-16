@@ -109,6 +109,14 @@ class CropVariety extends Model
             ->selectRaw('COALESCE(requested_translation.name, default_translation.name) as localized_name');
     }
 
+    public function scopePublished(Builder $query): void
+    {
+        $query->where('crop_varieties.is_active', true)->whereHas('crop', fn (Builder $crop): Builder => $crop->published());
+        foreach (self::REQUIRED_LOCALES as $locale) {
+            $query->whereHas('translations', fn (Builder $translation): Builder => $translation->where('locale', $locale)->whereRaw("TRIM(name) <> ''"));
+        }
+    }
+
     /**
      * Recheck publication requirements while the parent records are locked.
      *

@@ -27,6 +27,73 @@ class Region extends Model
         'village' => 'subdistrict',
     ];
 
+    /**
+     * Shared applicability for the five agricultural regional catalogues. Each EXISTS keeps one row per master.
+     * NULL optional conditions are generic; an unknown farm condition never matches a specific condition.
+     *
+     * @param  list<int>  $regionIds
+     * @param  array<string, mixed>  $conditions
+     */
+    public static function applyAgriculturalContext(Builder $query, array $regionIds, array $conditions = [], bool $sourceRequired = true): Builder
+    {
+        $table = $query->getModel()->getTable();
+        $query->where($table.'.is_active', true)->where(function (Builder $scope) use ($regionIds, $table): void {
+            $scope->where($table.'.region_scope', 'all')->orWhere(function (Builder $specific) use ($regionIds, $table): void {
+                $specific->where($table.'.region_scope', 'specific')
+                    ->whereHas('regions', fn (Builder $regions): Builder => $regions->whereIn('regions.id', $regionIds)->where('regions.is_active', true));
+            });
+        });
+        $source = fn (Builder $source): Builder => $source->where('is_active', true)->where('verification_status', 'verified')
+            ->where(fn (Builder $reference): Builder => $reference->whereNotNull('source_url')->orWhereNotNull('reference_identifier')->orWhereHas('attachments'));
+        if ($sourceRequired) {
+            $query->whereHas('knowledgeSource', $source);
+        } else {
+            $query->where(fn (Builder $query): Builder => $query->whereNull($table.'.source_id')->orWhereHas('knowledgeSource', $source));
+        }
+        foreach ($conditions as $field => $value) {
+            if ($field === 'crop_id') {
+                $query->where($table.'.'.$field, $value);
+            } else {
+                $query->where(fn (Builder $query): Builder => $value === null ? $query->whereNull($table.'.'.$field)
+                    : $query->whereNull($table.'.'.$field)->orWhere($table.'.'.$field, $value));
+            }
+        }
+        foreach ($regionIds as $rank => $regionId) {
+            $alias = 'farm_region_match_'.$rank;
+            $query->withExists(['regions as '.$alias => fn (Builder $regions): Builder => $regions->where('regions.id', $regionId)
+                ->where($table.'.region_scope', 'specific')])->orderByDesc($alias);
+        }
+        foreach (array_diff(array_keys($conditions), ['crop_id']) as $field) {
+            $query->orderByDesc($table.'.'.$field);
+        }
+
+        return $query->with(['regions' => fn (BelongsToMany $regions): BelongsToMany => $regions->withLocalizedName(), 'knowledgeSource.translations']);
+    }
+
+    /** @param list<int> $regionIds */
+    public static function applyPlanningPrices(Builder $query, array $regionIds, string $date, string $currency): Builder
+    {
+        return self::applyAgriculturalContext($query, $regionIds, sourceRequired: false)
+            ->where('currency_code', $currency)->where('package_quantity', '>', 0)->where('package_price', '>=', 0)
+            ->where('effective_from', '<=', $date)
+            ->where(fn (Builder $query): Builder => $query->whereNull('effective_to')->orWhere('effective_to', '>=', $date));
+    }
+
+    /** @param list<int> $regionIds
+     * @return array<string, mixed>
+     */
+    public static function agriculturalMatch(Model $record, array $regionIds): array
+    {
+        foreach ($regionIds as $rank => $id) {
+            if ($record->region_scope === 'specific' && ($region = $record->regions->firstWhere('id', $id)) !== null) {
+                return ['matched_region' => ['id' => $id, 'name' => $region->localized_name, 'region_type' => $region->region_type],
+                    'match_type' => $rank === 0 ? 'exact_region' : 'parent_region', 'region_specificity' => $rank];
+            }
+        }
+
+        return ['matched_region' => null, 'match_type' => 'general', 'region_specificity' => null];
+    }
+
     /** @var list<string> */
     protected $fillable = ['parent_id', 'code', 'region_type', 'latitude', 'longitude', 'is_active'];
 
@@ -66,6 +133,11 @@ class Region extends Model
     public function seedPrices(): BelongsToMany
     {
         return $this->belongsToMany(SeedPrice::class, 'seed_price_regions');
+    }
+
+    public function fertilizerPrices(): BelongsToMany
+    {
+        return $this->belongsToMany(FertilizerPrice::class, 'fertilizer_price_regions');
     }
 
     public function cropSeedRates(): BelongsToMany

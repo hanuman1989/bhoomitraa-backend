@@ -57,6 +57,9 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($httpStatus === 403 && $exception instanceof HttpExceptionInterface && in_array($exception->getMessage(), ['Admin account is inactive.', 'User account is inactive.'], true)) {
                 $message = $exception->getMessage();
             }
+            if ($httpStatus === 409 && $request->routeIs('account.farm-crops.*') && $exception instanceof HttpExceptionInterface) {
+                $message = $exception->getMessage();
+            }
 
             if ($exception instanceof UniqueConstraintViolationException) {
                 $httpStatus = 409;

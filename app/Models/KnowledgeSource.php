@@ -64,6 +64,11 @@ class KnowledgeSource extends Model
         return $this->hasMany(SeedPrice::class, 'source_id');
     }
 
+    public function fertilizerPrices(): HasMany
+    {
+        return $this->hasMany(FertilizerPrice::class, 'source_id');
+    }
+
     public function seedRates(): HasMany
     {
         return $this->hasMany(CropSeedRate::class, 'source_id');

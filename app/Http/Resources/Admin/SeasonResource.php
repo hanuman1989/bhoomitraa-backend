@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Admin;
 
+use App\Models\Season;
 use App\Models\SeasonTranslation;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -14,6 +15,7 @@ class SeasonResource extends JsonResource
         return [
             'id' => $this->id,
             'slug' => $this->slug,
+            ...$this->resource->only(Season::PRESENTATION_FIELDS),
             'name' => $this->resource->getAttribute('localized_name')
                 ?? $this->whenLoaded('translations', fn (): ?string => $this->resource->translatedName(), null),
             'description' => $this->resource->hasAttribute('localized_description')

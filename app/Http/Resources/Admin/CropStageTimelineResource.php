@@ -3,6 +3,7 @@
 namespace App\Http\Resources\Admin;
 
 use App\Models\Region;
+use App\Models\Season;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -26,6 +27,9 @@ class CropStageTimelineResource extends JsonResource
             'crop_variety_name' => $this->whenLoaded('cropVariety', fn (): ?string => $this->cropVariety?->translatedName($locale)),
             'season_id' => $this->season_id,
             'season_name' => $this->whenLoaded('season', fn (): ?string => $this->season?->translatedName($locale)),
+            'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : [
+                ...$this->season->only(['id', 'slug', ...Season::PRESENTATION_FIELDS]), 'name' => $this->season->translatedName($locale),
+            ]),
             'region_scope' => $this->when(! $request->routeIs('admin.crop-stage-timelines.index'), $this->region_scope),
             'region_ids' => $this->whenLoaded('regions', fn (): array => $this->regions->map(fn (Region $region): int => (int) $region->id)->all()),
             'regions' => $this->whenLoaded('regions', fn (): array => $this->regions->map(fn (Region $region): array => [

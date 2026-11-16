@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -53,6 +54,95 @@ class Farm extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function cropCycles(): HasMany
+    {
+        return $this->hasMany(FarmCropCycle::class);
+    }
+
+    public function activeCrops(): HasMany
+    {
+        return $this->hasMany(FarmCropCycle::class)->where('status', 'active');
+    }
+
+    /** Call under the farm lock when its region or agricultural classification changes. */
+    public function invalidateCropDrafts(): void
+    {
+        foreach ($this->cropCycles()->where('status', 'draft')->orderBy('id')->lockForUpdate()->get() as $cycle) {
+            $progress = $cycle->wizard_progress;
+            foreach (['seed_sowing', 'fertilizer_planning'] as $step) {
+                if (($progress[$step] ?? 'pending') !== 'pending') {
+                    $progress[$step] = 'needs_review';
+                }
+            }
+            $cycle->forceFill(['wizard_progress' => $progress, 'revision' => $cycle->revision + 1])->save();
+        }
+    }
+
+    /** Call before replacing or clearing geometry while holding this farm's row lock. */
+    public function validateActiveCropBoundary(?array $boundary): void
+    {
+        $active = $this->cropCycles()->where('status', 'active')->whereNotNull('boundary')->orderBy('id')->get(['id']);
+        if ($active->isEmpty()) {
+            return;
+        }
+        if ($boundary === null) {
+            throw ValidationException::withMessages(['boundary' => ['A farm boundary containing active crops cannot be removed.']]);
+        }
+        if (DB::getDriverName() === 'sqlite') {
+            throw ValidationException::withMessages(['boundary' => ['Validate active crop containment on MySQL before replacing the farm boundary.']]);
+        }
+        $json = json_encode($boundary, JSON_THROW_ON_ERROR);
+        if ($this->cropCycles()->where('status', 'active')->whereNotNull('boundary')
+            ->whereRaw('NOT ST_Contains('.FarmCropCycle::geometryExpression().', boundary)', [$json])->exists()) {
+            throw ValidationException::withMessages(['boundary' => ['The farm boundary must contain every active crop boundary.']]);
+        }
+    }
+
+    /** @return array{farm_id: int, region_id: ?int, applicable_regions: array, region_ids: list<int>, regional_context_available: bool, issue: ?string} */
+    public function regionContext(): array
+    {
+        $context = ['farm_id' => $this->id, 'region_id' => null, 'applicable_regions' => [], 'region_ids' => [],
+            'regional_context_available' => false, 'issue' => null];
+        $id = $this->tehsil_id ?? $this->district_id ?? $this->state_id ?? $this->region_id;
+        $visited = [];
+        $child = null;
+        while ($id !== null) {
+            if (isset($visited[$id]) || count($visited) >= count(Region::PARENT_TYPES)) {
+                $context['issue'] = 'invalid_region_hierarchy';
+
+                return $context;
+            }
+            $region = Region::query()->withLocalizedName()->find($id);
+            if ($region === null || ! $region->is_active || ! array_key_exists($region->region_type, Region::PARENT_TYPES)
+                || ($child !== null && Region::PARENT_TYPES[$child] !== $region->region_type)) {
+                $context['issue'] = 'invalid_region_hierarchy';
+
+                return $context;
+            }
+            $visited[$id] = ['id' => $region->id, 'name' => $region->localized_name, 'region_type' => $region->region_type, 'parent_id' => $region->parent_id];
+            $child = $region->region_type;
+            $id = $region->parent_id;
+        }
+        if ($child !== null && Region::PARENT_TYPES[$child] !== null) {
+            $context['issue'] = 'missing_region_parent';
+
+            return $context;
+        }
+        foreach (['region_id' => null, 'state_id' => 'state', 'district_id' => 'district', 'tehsil_id' => 'subdistrict'] as $field => $type) {
+            if ($this->{$field} !== null && (! isset($visited[$this->{$field}]) || ($type !== null && $visited[$this->{$field}]['region_type'] !== $type))) {
+                $context['issue'] = 'inconsistent_farm_regions';
+
+                return $context;
+            }
+        }
+        $context['region_ids'] = array_keys($visited);
+        $context['region_id'] = $context['region_ids'][0] ?? null;
+        $context['applicable_regions'] = array_values($visited);
+        $context['regional_context_available'] = $visited !== [];
+
+        return $context;
+    }
+
     public function region(): BelongsTo
     {
         return $this->belongsTo(Region::class, 'region_id');
@@ -79,6 +169,10 @@ class Farm extends Model
             'actual_area', 'actual_area_unit', 'boundary_source', 'gps_accuracy_m', 'is_active', 'created_at', 'updated_at'];
         $query->select(array_map(fn (string $column): string => 'farms.'.$column, $columns))
             ->selectRaw('(farms.boundary IS NOT NULL) as has_boundary')
+            ->withCount('activeCrops')
+            ->with(['activeCrops' => fn (HasMany $crops): HasMany => $crops
+                ->select(['id', 'farm_id', 'crop_id', 'crop_variety_id', 'cultivated_area', 'area_unit', 'status'])
+                ->with('crop.translations')->orderBy('id')])
             ->with([
                 'state' => fn (BelongsTo $region): BelongsTo => $region->withLocalizedName(),
                 'district' => fn (BelongsTo $region): BelongsTo => $region->withLocalizedName(),
@@ -261,8 +355,10 @@ class Farm extends Model
      */
     public static function boundaryMetrics(array $boundary): array
     {
-        $ring = $boundary['coordinates'][0][0];
-        $vertices = array_slice($ring, 0, -1);
+        $vertices = [];
+        foreach ($boundary['coordinates'] as $polygon) {
+            $vertices = [...$vertices, ...array_slice($polygon[0], 0, -1)];
+        }
         if (DB::getDriverName() !== 'sqlite' && ! DB::connection()->isMaria()) {
             $json = json_encode($boundary, JSON_THROW_ON_ERROR);
             $valid = DB::selectOne('SELECT ST_IsValid(ST_GeomFromGeoJSON(?, 1, 4326)) AS valid', [$json]);
@@ -272,12 +368,17 @@ class Farm extends Model
             $area = (float) DB::selectOne('SELECT ST_Area(ST_GeomFromGeoJSON(?, 1, 4326)) AS area', [$json])->area;
         } else {
             /** Chamberlain and Duquette, JPL Publication 07-03, section on spherical polygon area. */
-            $sum = 0.0;
-            for ($i = 0, $count = count($vertices); $i < $count; $i++) {
-                $next = $vertices[($i + 1) % $count];
-                $sum += deg2rad($next[0] - $vertices[$i][0]) * (sin(deg2rad($vertices[$i][1])) + sin(deg2rad($next[1])));
+            $area = 0.0;
+            foreach ($boundary['coordinates'] as $polygon) {
+                foreach ($polygon as $index => $ring) {
+                    $sum = 0.0;
+                    for ($i = 0, $count = count($ring) - 1; $i < $count; $i++) {
+                        $next = $ring[$i + 1];
+                        $sum += deg2rad($next[0] - $ring[$i][0]) * (sin(deg2rad($ring[$i][1])) + sin(deg2rad($next[1])));
+                    }
+                    $area += ($index === 0 ? 1 : -1) * abs($sum) * 6371008.8 ** 2 / 2;
+                }
             }
-            $area = abs($sum) * 6371008.8 ** 2 / 2;
         }
         if (! is_finite($area) || $area <= 0 || $area > 999999999999.999999) {
             throw ValidationException::withMessages(['boundary' => ['The farm boundary must enclose a supported positive area.']]);
