@@ -19,15 +19,38 @@ class Season extends Model
     /** @var list<string> */
     public const REQUIRED_LOCALES = ['en', 'hi'];
 
+    public const ICONS = ['sprout', 'sun', 'leaf'];
+
+    public const PRESENTATION_FIELDS = ['start_month', 'end_month', 'icon'];
+
     /** @var list<string> */
-    protected $fillable = ['slug'];
+    protected $fillable = ['slug', ...self::PRESENTATION_FIELDS];
 
     protected $dateFormat = 'Y-m-d H:i:s.u';
 
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['is_active' => 'boolean'];
+        return ['is_active' => 'boolean', 'start_month' => 'integer', 'end_month' => 'integer'];
+    }
+
+    /** @return array<string, list<string>> */
+    public function presentationErrors(): array
+    {
+        if (($this->start_month === null) !== ($this->end_month === null)) {
+            return array_fill_keys(['start_month', 'end_month'], ['Both start month and end month must be provided together.']);
+        }
+        $errors = [];
+        foreach (['start_month', 'end_month'] as $field) {
+            if ($this->{$field} !== null && ($this->{$field} < 1 || $this->{$field} > 12)) {
+                $errors[$field] = ['The '.str_replace('_', ' ', $field).' must be between 1 and 12.'];
+            }
+        }
+        if ($this->icon !== null && ! in_array($this->icon, self::ICONS, true)) {
+            $errors['icon'] = ['The selected season icon is invalid.'];
+        }
+
+        return $errors;
     }
 
     public function translations(): HasMany

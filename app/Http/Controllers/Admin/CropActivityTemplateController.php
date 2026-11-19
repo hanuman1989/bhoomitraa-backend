@@ -32,6 +32,7 @@ class CropActivityTemplateController extends Controller
             'category_id' => ['sometimes', 'integer', 'min:1', Rule::exists('activity_categories', 'id')],
             'crop_stage_id' => ['sometimes', 'integer', 'min:1', Rule::exists('crop_stages', 'id')],
             'season_id' => ['sometimes', 'integer', 'min:1', Rule::exists('seasons', 'id')],
+            'schedule_type' => ['sometimes', Rule::in(CropActivityTemplate::SCHEDULE_TYPES)],
             'priority' => ['sometimes', Rule::in(CropActivityTemplate::PRIORITIES)],
             'status' => ['sometimes', 'boolean'],
             'page' => ['sometimes', 'integer', 'min:1'],
@@ -39,7 +40,7 @@ class CropActivityTemplateController extends Controller
         ]);
         try {
             $query = CropActivityTemplate::query()->withLocalizedTitle()->with($this->displayRelations());
-            foreach (['crop_id', 'crop_variety_id', 'category_id', 'crop_stage_id', 'season_id', 'priority'] as $field) {
+            foreach (['crop_id', 'crop_variety_id', 'category_id', 'crop_stage_id', 'season_id', 'schedule_type', 'priority'] as $field) {
                 if (array_key_exists($field, $filters)) {
                     $query->where('crop_activity_templates.'.$field, $filters[$field]);
                 }
@@ -60,7 +61,7 @@ class CropActivityTemplateController extends Controller
             }
             $templates = $query->orderByDesc('crop_activity_templates.created_at')->orderByDesc('crop_activity_templates.id')
                 ->paginate($request->integer('per_page', 15))
-                ->appends($request->only(['keyword', 'crop_id', 'crop_variety_id', 'category_id', 'crop_stage_id', 'season_id', 'priority', 'status', 'per_page']));
+                ->appends($request->only(['keyword', 'crop_id', 'crop_variety_id', 'category_id', 'crop_stage_id', 'season_id', 'schedule_type', 'priority', 'status', 'per_page']));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to retrieve crop activity templates. Please try again later.');
         }
@@ -228,7 +229,7 @@ class CropActivityTemplateController extends Controller
             'cropVariety:id', 'cropVariety.translations' => $names,
             'category:id', 'category.translations' => $names,
             'cropStage:id', 'cropStage.translations' => $names,
-            'season:id', 'season.translations' => $names,
+            'season:id,slug,start_month,end_month,icon', 'season.translations' => $names,
             'source:id,title,publisher,source_type,source_url,language,reference_identifier,is_active,verification_status',
             'source.translations' => static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
                 ->select(['id', $translations->getForeignKeyName(), 'locale', 'title']),

@@ -189,7 +189,7 @@ class CropSeedRateController extends Controller
             ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
         $relations = [
             'crop:id,crop_color', 'crop.translations' => $names, 'cropVariety:id', 'cropVariety.translations' => $names,
-            'season:id', 'season.translations' => $names,
+            'season:id,slug,start_month,end_month,icon', 'season.translations' => $names,
             'seed:id,crop_id,crop_variety_id,sku,material_type,default_unit_code,reference_pack_quantity,reference_pack_unit_code',
             'seed.translations' => $names, 'seed.primaryImage',
             'knowledgeSource:id,title,publisher,source_type,source_url,reference_identifier',

@@ -4,6 +4,7 @@ namespace App\Http\Resources\Admin;
 
 use App\Models\CropActivityTemplateTranslation;
 use App\Models\Region;
+use App\Models\Season;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -31,6 +32,9 @@ class CropActivityTemplateResource extends JsonResource
             'crop_stage_name' => $this->whenLoaded('cropStage', fn (): ?string => $this->cropStage?->translatedName($locale)),
             'season_id' => $this->season_id,
             'season_name' => $this->whenLoaded('season', fn (): ?string => $this->season?->translatedName($locale)),
+            'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : [
+                ...$this->season->only(['id', 'slug', ...Season::PRESENTATION_FIELDS]), 'name' => $this->season->translatedName($locale),
+            ]),
             'schedule_type' => $this->schedule_type,
             'start_offset_days' => $this->start_offset_days,
             'end_offset_days' => $this->end_offset_days,

@@ -31,6 +31,11 @@ class Fertilizer extends Model
 
     public const MAX_IMAGES = Seed::MAX_IMAGES;
 
+    public function prices(): HasMany
+    {
+        return $this->hasMany(FertilizerPrice::class);
+    }
+
     protected $fillable = ['slug', 'fertilizer_code', 'fertilizer_type', 'form', 'brand_name', 'manufacturer_name', 'grade',
         'default_unit_code', 'reference_pack_quantity', 'reference_pack_unit_code', 'application_method'];
 

@@ -39,7 +39,27 @@ class ActivityCategory extends Model
         'UserRoundCheckIcon',
         'HarvestingIcon',
         'ClipboardListIcon',
-
+        'ShovelIcon',
+        'WeedManagementIcon',
+        'BugIcon',
+        'CloudSunIcon',
+        'WeatherIcon',
+        'PollinationIcon',
+        'ScissorsIcon',
+        'YieldAssessmentIcon',
+        'HarvestingSickleIcon',
+        'PostHarvestIcon',
+        'RecycleIcon',
+        'WarehouseIcon',
+        'TruckIcon',
+        'ShoppingCartIcon',
+        'WalletIcon',
+        'ClipboardCheckIcon',
+        'DrainageIcon',
+        'WavesIcon',
+        'WaterIcon',
+        'FertilizerIcon',
+        'GroupIcon',
     ];
 
     /**

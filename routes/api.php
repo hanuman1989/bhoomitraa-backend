@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Account\AuthController as AccountAuthController;
 use App\Http\Controllers\Account\FarmController as AccountFarmController;
+use App\Http\Controllers\Account\FarmCropController;
+use App\Http\Controllers\Account\FertilizerPriceController;
 use App\Http\Controllers\Account\UserController as AccountUserController;
 use App\Http\Controllers\Admin\ActivityCategoryController;
 use App\Http\Controllers\Admin\AdminUserController;
@@ -150,6 +152,41 @@ Route::prefix('account')->name('account.')->group(function (): void {
     Route::post('login', [AccountAuthController::class, 'login'])->middleware('throttle:login')->name('login');
 
     Route::middleware(['auth:user', 'abilities:frontend', 'user.active'])->group(function (): void {
+        Route::get('regions', [App\Http\Controllers\Account\RegionController::class, 'getList'])->name('regions.list');
+        Route::get('seasons', [App\Http\Controllers\Account\SeasonController::class, 'getList'])->name('seasons.list');
+        Route::get('crop-categories', [App\Http\Controllers\Account\CropCategoryController::class, 'getList'])->name('crop-categories.list');
+        Route::get('crops/list', [App\Http\Controllers\Account\CropController::class, 'getList'])->name('crops.list');
+        Route::get('crop-varieties', [App\Http\Controllers\Account\CropVarietyController::class, 'getList'])->name('crop-varieties.list');
+        Route::get('seeds', [App\Http\Controllers\Account\SeedController::class, 'getList'])->name('seeds.list');
+        Route::get('seed-lots', [App\Http\Controllers\Account\SeedLotController::class, 'getList'])->name('seed-lots.list');
+        Route::get('seed-prices', [App\Http\Controllers\Account\SeedPriceController::class, 'getList'])->name('seed-prices.list');
+        Route::get('crop-seed-rates', [App\Http\Controllers\Account\CropSeedRateController::class, 'getList'])->name('crop-seed-rates.list');
+        Route::get('fertilizers', [App\Http\Controllers\Account\FertilizerController::class, 'getList'])->name('fertilizers.list');
+        Route::get('fertilizer-recommendations', [App\Http\Controllers\Account\FertilizerRecommendationController::class, 'getList'])->name('fertilizer-recommendations.list');
+        Route::get('fertilizer-prices', [FertilizerPriceController::class, 'getList'])->name('fertilizer-prices.list');
+        Route::get('crop-yield-benchmarks', [App\Http\Controllers\Account\CropYieldBenchmarkController::class, 'getList'])->name('crop-yield-benchmarks.list');
+
+        Route::get('farms/{farmId}/crop-boundaries', [FarmCropController::class, 'getFarmCropBoundaries'])->whereNumber('farmId')->name('farms.crop-boundaries');
+        Route::prefix('farm-crops')->name('farm-crops.')->controller(FarmCropController::class)->group(function (): void {
+            Route::get('/', 'getList')->name('list');
+            Route::get('summary', 'summary')->name('summary');
+            Route::get('map', 'getMapList')->name('map');
+            Route::post('/', 'saveStepOne')->name('store');
+            Route::get('{id}', 'show')->whereNumber('id')->name('show');
+            Route::put('{id}/step-1', 'updateStepOne')->whereNumber('id')->name('step-1');
+            Route::put('{id}/step-2', 'saveStepTwo')->whereNumber('id')->name('step-2');
+            Route::put('{id}/step-3', 'saveStepThree')->whereNumber('id')->name('step-3');
+            Route::match(['POST', 'PUT'], '{id}/step-4', 'saveStepFour')->whereNumber('id')->name('step-4');
+            Route::put('{id}/step-5', 'saveStepFive')->whereNumber('id')->name('step-5');
+            Route::get('{id}/seed-recommendation', 'getSeedRecommendation')->whereNumber('id')->name('seed-recommendation');
+            Route::get('{id}/fertilizer-recommendation', 'getFertilizerRecommendation')->whereNumber('id')->name('fertilizer-recommendation');
+            Route::get('{id}/review', 'review')->whereNumber('id')->name('review');
+            Route::post('{id}/finalize', 'finalize')->whereNumber('id')->name('finalize');
+            Route::delete('{id}', 'destroy')->whereNumber('id')->name('destroy');
+            Route::delete('{id}/edit-draft', 'discardEdit')->whereNumber('id')->name('discard-edit');
+            Route::get('{id}/soil-report', 'currentSoilReport')->whereNumber('id')->name('current-soil-report');
+            Route::get('{id}/soil-tests/{soilTest}/report', 'soilReport')->whereNumber(['id', 'soilTest'])->name('soil-report');
+        });
         Route::get('area-units', [AccountUserController::class, 'areaUnits'])->name('area-units');
         Route::get('farms/summary', [AccountFarmController::class, 'summary'])->name('farms.summary');
         Route::get('farms', [AccountFarmController::class, 'index'])->name('farms.index');

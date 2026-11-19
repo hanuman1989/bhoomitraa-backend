@@ -57,7 +57,7 @@ class CropStageController extends Controller
                     ->where('locale', config('languages.default'))->limit(1));
             }
             $stages = $query->orderBy('crop_stages.sequence')->orderBy('crop_stages.id')
-                ->paginate($request->integer('per_page', 15))
+                ->paginate($request->integer('per_page', 20))
                 ->appends($request->only(['keyword', 'crop_id', 'status', 'per_page']));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to retrieve growth stages. Please try again later.');

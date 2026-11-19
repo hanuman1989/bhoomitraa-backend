@@ -3,6 +3,7 @@
 namespace App\Http\Resources\Admin;
 
 use App\Models\Region;
+use App\Models\Season;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -26,7 +27,9 @@ class CropSeedRateResource extends JsonResource
             'season_name' => $this->whenLoaded('season', fn (): ?string => $this->season?->translatedName()),
             'crop' => $this->whenLoaded('crop', fn (): ?array => $this->crop === null ? null : ['id' => $this->crop->id, 'name' => $this->crop->translatedName(), 'crop_color' => $this->crop->crop_color]),
             'crop_variety' => $this->whenLoaded('cropVariety', fn (): ?array => $this->cropVariety === null ? null : ['id' => $this->cropVariety->id, 'name' => $this->cropVariety->translatedName()]),
-            'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : ['id' => $this->season->id, 'name' => $this->season->translatedName()]),
+            'season' => $this->whenLoaded('season', fn (): ?array => $this->season === null ? null : [
+                ...$this->season->only(['id', 'slug', ...Season::PRESENTATION_FIELDS]), 'name' => $this->season->translatedName(),
+            ]),
             'seed' => $this->whenLoaded('seed', fn (): ?array => $this->seed === null ? null : [
                 'id' => $this->seed->id, 'name' => $this->seed->translation()?->name, 'sku' => $this->seed->sku,
                 'crop_id' => $this->seed->crop_id, 'crop_variety_id' => $this->seed->crop_variety_id, 'material_type' => $this->seed->material_type,

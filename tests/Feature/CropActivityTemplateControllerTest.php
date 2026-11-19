@@ -147,6 +147,28 @@ test('admins create inactive templates with medium priority and all configured t
     expect($district->cropActivityTemplates->modelKeys())->toBe([$template->id]);
 });
 
+test('admins can create and filter each supported schedule type', function () {
+    $admin = AdminUser::factory()->create();
+    $context = activityTemplateContext();
+    $token = $admin->createToken('test', ['admin'])->plainTextToken;
+
+    foreach (CropActivityTemplate::SCHEDULE_TYPES as $scheduleType) {
+        $this->withToken($token)
+            ->postJson('/api/admin/crop-activity-templates', activityTemplatePayload($context, [
+                'schedule_type' => $scheduleType,
+            ]))
+            ->assertCreated()
+            ->assertJsonPath('data.schedule_type', $scheduleType);
+    }
+
+    $response = $this->withToken($token)
+        ->getJson('/api/admin/crop-activity-templates?schedule_type=before_sowing')
+        ->assertOk()
+        ->assertJsonPath('data.0.schedule_type', 'before_sowing');
+
+    expect($response->json('data'))->toHaveCount(1);
+});
+
 test('general templates allow null variety and stage and zero length after sowing windows', function () {
     $admin = AdminUser::factory()->create();
     $context = activityTemplateContext();

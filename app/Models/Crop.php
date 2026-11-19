@@ -21,7 +21,7 @@ class Crop extends Model
     public const REQUIRED_LOCALES = ['en', 'hi'];
 
     /** @var list<string> */
-    protected $fillable = ['category_id', 'slug', 'scientific_name', 'crop_code', 'crop_color', 'is_active', 'ai_diagnosis_enabled'];
+    protected $fillable = ['category_id', 'slug', 'scientific_name', 'crop_code', 'crop_color', 'is_active', 'ai_diagnosis_enabled', 'is_recommendate'];
 
     /** @var list<string> */
     protected $hidden = ['image'];
@@ -31,7 +31,12 @@ class Crop extends Model
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['category_id' => 'integer', 'is_active' => 'boolean', 'ai_diagnosis_enabled' => 'boolean'];
+        return [
+            'category_id' => 'integer',
+            'is_active' => 'boolean',
+            'ai_diagnosis_enabled' => 'boolean',
+            'is_recommendate' => 'boolean',
+        ];
     }
 
     public function category(): BelongsTo
@@ -156,6 +161,7 @@ class Crop extends Model
             if (! $crop->exists) {
                 $crop->is_active = false;
                 $crop->ai_diagnosis_enabled = false;
+                $crop->is_recommendate = false;
             }
             $crop->fill($attributes);
             $errors = $crop->activationErrors($translations, lockCategory: true);
