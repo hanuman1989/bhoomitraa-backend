@@ -48,6 +48,73 @@ function nativeCropReady(TestCase $test, array $context, array $boundary, string
     return $test->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 4, 'skipped' => true])->assertOk()->json('data');
 }
 
+test('saves and activates a crop matching the precise farm boundary', function (string $source) {
+    if (getenv('FARM_CROP_SPATIAL_DATABASE_TESTS') !== '1') {
+        $this->markTestSkipped('Set FARM_CROP_SPATIAL_DATABASE_TESTS=1 to run isolated native spatial tests.');
+    }
+    withCropSpatialDatabase(function () use ($source): void {
+        $context = cropManagerContext();
+        $full = cropManagerPolygon(75.12345678912345, 75.12745678912345, 26.12345678912345, 26.12745678912345);
+        $farmUrl = '/api/account/farms/'.$context['farm']->id;
+        $this->withToken($context['user']->createToken('native-crop', ['frontend'])->plainTextToken)
+            ->patchJson($farmUrl.'/boundary', ['boundary' => $full, 'boundary_source' => 'manual'])->assertOk();
+        $boundary = $this->getJson($farmUrl)->assertOk()->json('data.boundary');
+
+        $ready = nativeCropReady($this, $context, $boundary, $source);
+        $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 5])
+            ->assertOk()->assertJsonPath('data.status', 'active')->assertJsonPath('data.boundary_details.boundary', $full);
+
+        $this->assertDatabaseHas('farm_crop_cycles', ['id' => $ready['id'], 'status' => 'active', 'boundary_source' => $source]);
+        $this->patchJson($farmUrl.'/boundary', ['boundary' => $boundary, 'boundary_source' => 'manual'])->assertOk();
+    });
+})->with([
+    'saved farm boundary' => ['farm_boundary'],
+    'matching manual boundary' => ['manual'],
+    'matching GPS boundary' => ['gps'],
+]);
+
+test('saves a smaller crop sharing a precise farm edge', function () {
+    if (getenv('FARM_CROP_SPATIAL_DATABASE_TESTS') !== '1') {
+        $this->markTestSkipped('Set FARM_CROP_SPATIAL_DATABASE_TESTS=1 to run isolated native spatial tests.');
+    }
+    withCropSpatialDatabase(function (): void {
+        $context = cropManagerContext();
+        $full = cropManagerPolygon(75.12345678912345, 75.12745678912345, 26.12345678912345, 26.12745678912345);
+        $this->withToken($context['user']->createToken('native-crop', ['frontend'])->plainTextToken)
+            ->patchJson('/api/account/farms/'.$context['farm']->id.'/boundary', ['boundary' => $full, 'boundary_source' => 'manual'])->assertOk();
+        $draft = cropManagerDraft($this, $context);
+        $boundary = cropManagerPolygon(75.12345678912345, 75.125, 26.124, 26.126);
+
+        $this->putJson('/api/account/farm-crops/'.$draft['id'].'/step-2', ['revision' => 1, 'boundary_source' => 'manual', 'boundary' => $boundary])
+            ->assertOk()->assertJsonPath('data.boundary_details.boundary', $boundary);
+
+        $this->assertDatabaseHas('farm_crop_cycles', ['id' => $draft['id'], 'revision' => 2, 'boundary_source' => 'manual']);
+    });
+});
+
+test('returns 422 without saving crop boundaries extending outside the farm', function (array $boundary) {
+    if (getenv('FARM_CROP_SPATIAL_DATABASE_TESTS') !== '1') {
+        $this->markTestSkipped('Set FARM_CROP_SPATIAL_DATABASE_TESTS=1 to run isolated native spatial tests.');
+    }
+    withCropSpatialDatabase(function () use ($boundary): void {
+        $context = cropManagerContext();
+        $full = cropManagerPolygon(75.12345678912345, 75.12745678912345, 26.12345678912345, 26.12745678912345);
+        $this->withToken($context['user']->createToken('native-crop', ['frontend'])->plainTextToken)
+            ->patchJson('/api/account/farms/'.$context['farm']->id.'/boundary', ['boundary' => $full, 'boundary_source' => 'manual'])->assertOk();
+        $draft = cropManagerDraft($this, $context);
+
+        $this->putJson('/api/account/farm-crops/'.$draft['id'].'/step-2', ['revision' => 1, 'boundary_source' => 'manual', 'boundary' => $boundary])
+            ->assertUnprocessable()->assertJsonValidationErrors('boundary')
+            ->assertJsonPath('errors.boundary.0', 'The crop boundary must be inside or equal to the farm boundary.');
+
+        $this->assertDatabaseHas('farm_crop_cycles', ['id' => $draft['id'], 'revision' => 1, 'boundary' => null, 'cultivated_area' => null]);
+    });
+})->with([
+    'larger than the farm' => [cropManagerPolygon(75.12, 75.13, 26.12, 26.13)],
+    'smaller but crossing the farm edge' => [cropManagerPolygon(75.126, 75.128, 26.124, 26.126)],
+    'same size but shifted outside' => [cropManagerPolygon(75.12445678912345, 75.12845678912345, 26.12345678912345, 26.12745678912345)],
+]);
+
 test('native spatial allocations support adjacent crops union occupancy finalization races and parent boundary safeguards', function () {
     if (getenv('FARM_CROP_SPATIAL_DATABASE_TESTS') !== '1') {
         $this->markTestSkipped('Set FARM_CROP_SPATIAL_DATABASE_TESTS=1 to run isolated native spatial and concurrency tests.');

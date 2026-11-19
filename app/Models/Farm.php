@@ -181,7 +181,7 @@ class Farm extends Model
         if ($includeBoundary) {
             $query->selectRaw(DB::getDriverName() === 'sqlite'
                 ? 'farms.boundary as boundary_geojson'
-                : 'ST_AsGeoJSON(farms.boundary, 9, 0) as boundary_geojson');
+                : 'ST_AsGeoJSON(farms.boundary) as boundary_geojson');
         }
     }
 

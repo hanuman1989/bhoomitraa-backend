@@ -22,7 +22,7 @@ class CropActivityTemplate extends Model
     public const REQUIRED_LOCALES = ['en', 'hi'];
 
     /** @var list<string> */
-    public const SCHEDULE_TYPES = ['after_sowing'];
+    public const SCHEDULE_TYPES = ['before_sowing', 'after_sowing', 'after_harvesting'];
 
     /** @var list<string> */
     public const REGION_SCOPES = ['all', 'specific'];
@@ -151,7 +151,7 @@ class CropActivityTemplate extends Model
             $errors['crop_id'] = ['The parent crop cannot be changed after creation.'];
         }
         if (! in_array($this->schedule_type, self::SCHEDULE_TYPES, true)) {
-            $errors['schedule_type'] = ['Only after_sowing scheduling is supported.'];
+            $errors['schedule_type'] = ['Select a supported activity schedule.'];
         }
         foreach (['start_offset_days', 'end_offset_days'] as $field) {
             if ($this->{$field} === null || $this->{$field} < 0 || $this->{$field} > self::MAX_OFFSET_DAYS) {

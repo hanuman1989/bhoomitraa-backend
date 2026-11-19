@@ -233,9 +233,16 @@ class FarmerSmartTimelineGenerator
             $translation = $template->translation();
             $templateContext = ['template_id' => $template->id, 'template_title' => $translation?->title];
             if ($template->schedule_type !== 'after_sowing') {
-                $this->warning($warnings, 'UNSUPPORTED_SCHEDULE_TYPE', 'A matching activity uses an unsupported scheduling type.', [...$templateContext, 'schedule_type' => $template->schedule_type]);
+                if ($template->schedule_type === 'after_harvesting') {
+                    $this->warning($warnings, 'HARVEST_DATE_NOT_AVAILABLE', 'A dated activity is deferred until the actual harvest date is recorded.', [...$templateContext, 'schedule_type' => $template->schedule_type]);
 
-                continue;
+                    continue;
+                }
+                if ($template->schedule_type !== 'before_sowing') {
+                    $this->warning($warnings, 'UNSUPPORTED_SCHEDULE_TYPE', 'A matching activity uses an unsupported scheduling type.', [...$templateContext, 'schedule_type' => $template->schedule_type]);
+
+                    continue;
+                }
             }
             $category = $template->category;
             $reason = $category === null || ! $category->is_active || $category->activationErrors() !== [] ? 'category_ineligible' : null;
@@ -260,7 +267,9 @@ class FarmerSmartTimelineGenerator
 
                 continue;
             }
-            $window = $this->window($sowingDate, $range, $maxOffset, $warnings, $templateContext);
+            $window = $template->schedule_type === 'before_sowing'
+                ? $this->beforeWindow($sowingDate, $range, (int) CarbonImmutable::createFromFormat('!Y-m-d', '0001-01-01', 'UTC')->diffInDays($sowingDate), $warnings, $templateContext)
+                : $this->window($sowingDate, $range, $maxOffset, $warnings, $templateContext);
             if ($window === null) {
                 continue;
             }
@@ -350,6 +359,27 @@ class FarmerSmartTimelineGenerator
 
         return ['start_day' => $range[0], 'end_day' => $range[1],
             'start_date' => $sowingDate->addDays($range[0])->toDateString(), 'end_date' => $sowingDate->addDays($range[1])->toDateString()];
+    }
+
+    /**
+     * @param  array{int, int}  $range
+     * @param  array<string, array<string, mixed>>  $warnings
+     * @param  array<string, mixed>  $context
+     * @return array{start_day: int, end_day: int, start_date: string, end_date: string}|null
+     */
+    private function beforeWindow(CarbonImmutable $sowingDate, array $range, int $maximum, array &$warnings, array $context): ?array
+    {
+        if ($range[1] > $maximum) {
+            $this->warning($warnings, 'DATE_RANGE_UNSUPPORTED', 'The configured offsets exceed the supported four-digit calendar date range for this sowing date.', $context);
+
+            return null;
+        }
+
+        return [
+            'start_day' => -$range[1], 'end_day' => -$range[0],
+            'start_date' => $sowingDate->subDays($range[1])->toDateString(),
+            'end_date' => $sowingDate->subDays($range[0])->toDateString(),
+        ];
     }
 
     /** @param array<string, array<string, mixed>> $warnings */

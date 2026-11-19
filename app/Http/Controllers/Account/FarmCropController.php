@@ -880,7 +880,7 @@ class FarmCropController extends Controller
         }
         $inside = DB::selectOne('SELECT ST_Contains(boundary, '.FarmCropCycle::geometryExpression().') AS inside FROM farms WHERE id = ?', [$json, $farm->id]);
         if (! $inside->inside) {
-            throw ValidationException::withMessages(['boundary' => ['The crop boundary must be fully contained within the farm.']]);
+            throw ValidationException::withMessages(['boundary' => ['The crop boundary must be inside or equal to the farm boundary.']]);
         }
         if ((clone $active)->whereNull('boundary')->exists()) {
             abort(409, 'An active crop has no verified boundary. Resolve its allocation before adding another crop.');
@@ -916,7 +916,7 @@ class FarmCropController extends Controller
                 continue;
             }
             $expression = FarmCropCycle::geometryExpression();
-            $result = DB::selectOne('SELECT ST_AsGeoJSON(ST_Union('.$expression.', '.$expression.'), 9, 0) AS geometry', [
+            $result = DB::selectOne('SELECT ST_AsGeoJSON(ST_Union('.$expression.', '.$expression.')) AS geometry', [
                 json_encode($union, JSON_THROW_ON_ERROR), json_encode($cycle->boundary_geojson, JSON_THROW_ON_ERROR)]);
             $union = json_decode($result->geometry, true, flags: JSON_THROW_ON_ERROR);
             if ($union['type'] === 'Polygon') {

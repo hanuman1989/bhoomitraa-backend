@@ -47,8 +47,8 @@ class ActivityCategoryController extends Controller
                             ->whereRaw("name LIKE ? ESCAPE '!'", [$pattern]));
                 });
             }
-            $categories = $query->orderBy('localized_name')->orderBy('activity_categories.id')
-                ->paginate($request->integer('per_page', 15))
+            $categories = $query->orderBy('activity_categories.id', 'desc')->orderBy('localized_name')
+                ->paginate($request->integer('per_page', 30))
                 ->appends($request->only(['keyword', 'status', 'is_system', 'per_page']));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to retrieve activity categories. Please try again later.');

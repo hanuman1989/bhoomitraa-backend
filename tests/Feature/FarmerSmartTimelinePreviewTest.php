@@ -396,6 +396,37 @@ test('unsupported scheduling types are diagnosed without generating dates', func
     expect($warning['context']->template_title)->toBe('Inspect field');
 });
 
+test('before sowing activity windows run backward from the selected sowing date', function () {
+    $context = smartPreviewContext();
+    $template = smartPreviewActivity($context, [
+        'schedule_type' => 'before_sowing',
+        'start_offset_days' => 3,
+        'end_offset_days' => 5,
+    ]);
+
+    $result = app(FarmerSmartTimelineGenerator::class)->generate(smartPreviewInput($context));
+
+    expect($result['activities'][0])->toMatchArray([
+        'template_id' => $template->id,
+        'schedule_type' => 'before_sowing',
+        'start_day' => -5,
+        'end_day' => -3,
+        'start_date' => '2026-10-27',
+        'end_date' => '2026-10-29',
+        'status' => 'planned',
+    ]);
+});
+
+test('after harvesting preview activities are deferred without an actual harvest date', function () {
+    $context = smartPreviewContext();
+    smartPreviewActivity($context, ['schedule_type' => 'after_harvesting']);
+
+    $result = app(FarmerSmartTimelineGenerator::class)->generate(smartPreviewInput($context));
+
+    expect($result['activities'])->toBe([]);
+    expect(array_column($result['warnings'], 'code'))->toContain('HARVEST_DATE_NOT_AVAILABLE');
+});
+
 test('invalid legacy offsets are diagnosed safely', function (mixed $start, mixed $end, bool $activity) {
     $context = smartPreviewContext();
     if ($activity) {

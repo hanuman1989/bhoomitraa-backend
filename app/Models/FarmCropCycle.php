@@ -109,7 +109,7 @@ class FarmCropCycle extends Model
     public function scopeWithBoundary(Builder $query): void
     {
         $query->addSelect('farm_crop_cycles.*')->selectRaw(DB::getDriverName() === 'sqlite'
-            ? 'farm_crop_cycles.boundary AS boundary_geojson' : 'ST_AsGeoJSON(farm_crop_cycles.boundary, 9, 0) AS boundary_geojson');
+            ? 'farm_crop_cycles.boundary AS boundary_geojson' : 'ST_AsGeoJSON(farm_crop_cycles.boundary) AS boundary_geojson');
     }
 
     public function nextStep(): ?int
