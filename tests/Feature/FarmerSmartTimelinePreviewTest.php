@@ -54,16 +54,42 @@ function smartPreviewInput(array $context, array $overrides = []): array
 /** @param array<string, mixed> $context */
 function smartPreviewStage(array $context, array $overrides = []): CropStageTimeline
 {
-    return CropStageTimeline::factory()->for($context['stage'], 'cropStage')->for($context['source'], 'source')
-        ->create(array_replace(['season_id' => $context['season']->id, 'is_active' => true], $overrides));
+    $varietyId = $overrides['crop_variety_id'] ?? null;
+    $seasonId = $overrides['season_id'] ?? $context['season']->id;
+    $sourceId = $overrides['source_id'] ?? $context['source']->id;
+    unset($overrides['crop_variety_id'], $overrides['season_id'], $overrides['source_id']);
+    $timeline = CropStageTimeline::factory()->for($context['stage'], 'cropStage')
+        ->create(array_replace([
+            'variety_scope' => $varietyId === null ? 'all' : 'specific',
+            'season_scope' => $seasonId === null ? 'all' : 'specific',
+            'is_active' => true,
+        ], $overrides));
+    $timeline->varieties()->sync($varietyId === null ? [] : [$varietyId]);
+    $timeline->seasons()->sync($seasonId === null ? [] : [$seasonId]);
+    $timeline->knowledgeSources()->sync([$sourceId]);
+
+    return $timeline;
 }
 
 /** @param array<string, mixed> $context */
 function smartPreviewActivity(array $context, array $overrides = []): CropActivityTemplate
 {
-    return CropActivityTemplate::factory()->for($context['crop'], 'crop')->for($context['category'], 'category')
-        ->for($context['season'], 'season')->for($context['source'], 'source')->withTitles('Inspect field', 'खेत जाँचें')
-        ->create(array_replace(['is_active' => true], $overrides));
+    $varietyId = $overrides['crop_variety_id'] ?? null;
+    $seasonId = $overrides['season_id'] ?? $context['season']->id;
+    $sourceId = $overrides['source_id'] ?? $context['source']->id;
+    unset($overrides['crop_variety_id'], $overrides['season_id'], $overrides['source_id']);
+    $template = CropActivityTemplate::factory()->for($context['crop'], 'crop')->for($context['category'], 'category')
+        ->withTitles('Inspect field', 'खेत जाँचें')
+        ->create(array_replace([
+            'variety_scope' => $varietyId === null ? 'all' : 'specific',
+            'season_scope' => $seasonId === null ? 'all' : 'specific',
+            'is_active' => true,
+        ], $overrides));
+    $template->varieties()->sync($varietyId === null ? [] : [$varietyId]);
+    $template->seasons()->sync($seasonId === null ? [] : [$seasonId]);
+    $template->knowledgeSources()->sync([$sourceId]);
+
+    return $template;
 }
 
 test('smart timeline preview returns 401 without an admin token or with a farmer identity', function (bool $farmer) {
@@ -224,11 +250,11 @@ test('matching excludes unrelated crop season variety region and inactive record
     expect($result[$activity ? 'activities' : 'growth_stages'])->toBe([]);
 })->with(['other crop', 'other season', 'other variety', 'inactive', 'nonmatching district', 'unknown region scope'])->with(['stage' => false, 'activity' => true]);
 
-test('null season stage timelines never match an exact selected season', function () {
+test('all-season stage timelines match an exact selected season', function () {
     $context = smartPreviewContext();
     smartPreviewStage($context, ['season_id' => null]);
 
-    expect(app(FarmerSmartTimelineGenerator::class)->generate(smartPreviewInput($context))['growth_stages'])->toBe([]);
+    expect(app(FarmerSmartTimelineGenerator::class)->generate(smartPreviewInput($context))['growth_stages'])->not->toBe([]);
 });
 
 test('no selected variety matches generic stages and activities only', function () {
@@ -570,8 +596,8 @@ test('missing source relationships are diagnosed without creating estimates or a
     $activity = smartPreviewActivity($context);
     DB::statement('PRAGMA defer_foreign_keys = ON');
     try {
-        DB::table('crop_stage_timelines')->where('id', $stage->id)->update(['source_id' => 999999]);
-        DB::table('crop_activity_templates')->where('id', $activity->id)->update(['source_id' => 999999]);
+        $stage->knowledgeSources()->detach();
+        $activity->knowledgeSources()->detach();
 
         $result = app(FarmerSmartTimelineGenerator::class)->generate(smartPreviewInput($context));
 
@@ -583,8 +609,8 @@ test('missing source relationships are diagnosed without creating estimates or a
             expect($warning['context']->reason)->toBe('source_missing');
         }
     } finally {
-        DB::table('crop_stage_timelines')->where('id', $stage->id)->update(['source_id' => $context['source']->id]);
-        DB::table('crop_activity_templates')->where('id', $activity->id)->update(['source_id' => $context['source']->id]);
+        $stage->knowledgeSources()->sync([$context['source']->id]);
+        $activity->knowledgeSources()->sync([$context['source']->id]);
         DB::statement('PRAGMA defer_foreign_keys = OFF');
     }
 });

@@ -31,6 +31,11 @@ class CropStageTimelineController extends Controller
             'crop_stage_id' => ['sometimes', 'integer', 'min:1', Rule::exists('crop_stages', 'id')],
             'crop_variety_id' => ['sometimes', 'integer', 'min:1', Rule::exists('crop_varieties', 'id')],
             'season_id' => ['sometimes', 'integer', 'min:1', Rule::exists('seasons', 'id')],
+            'source_id' => ['sometimes', 'integer', 'min:1', Rule::exists('knowledge_sources', 'id')],
+            'region_id' => ['sometimes', 'integer', 'min:1', Rule::exists('regions', 'id')],
+            'variety_scope' => ['sometimes', Rule::in(CropStageTimeline::VARIETY_SCOPES)],
+            'season_scope' => ['sometimes', Rule::in(CropStageTimeline::SEASON_SCOPES)],
+            'region_scope' => ['sometimes', Rule::in(CropStageTimeline::REGION_SCOPES)],
             'status' => ['sometimes', 'boolean'],
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
@@ -38,10 +43,31 @@ class CropStageTimelineController extends Controller
 
         try {
             $query = CropStageTimeline::query()->with($this->displayRelations());
-            foreach (['crop_stage_id', 'crop_variety_id', 'season_id'] as $field) {
+            foreach (['crop_stage_id', 'variety_scope', 'season_scope', 'region_scope'] as $field) {
                 if (array_key_exists($field, $filters)) {
                     $query->where($field, $filters[$field]);
                 }
+            }
+            if (array_key_exists('crop_variety_id', $filters)) {
+                $varietyId = $filters['crop_variety_id'];
+                $query->where(fn (Builder $query): Builder => $query
+                    ->where('variety_scope', 'all')
+                    ->orWhereHas('varieties', fn (Builder $varieties): Builder => $varieties->whereKey($varietyId)));
+            }
+            if (array_key_exists('season_id', $filters)) {
+                $seasonId = $filters['season_id'];
+                $query->where(fn (Builder $query): Builder => $query
+                    ->where('season_scope', 'all')
+                    ->orWhereHas('seasons', fn (Builder $seasons): Builder => $seasons->whereKey($seasonId)));
+            }
+            if (array_key_exists('source_id', $filters)) {
+                $query->whereHas('knowledgeSources', fn (Builder $sources): Builder => $sources->whereKey($filters['source_id']));
+            }
+            if (array_key_exists('region_id', $filters)) {
+                $regionId = $filters['region_id'];
+                $query->where(fn (Builder $query): Builder => $query
+                    ->where('region_scope', 'all')
+                    ->orWhereHas('regions', fn (Builder $regions): Builder => $regions->whereKey($regionId)));
             }
             if (array_key_exists('crop_id', $filters)) {
                 $query->whereHas('cropStage', fn (Builder $stage): Builder => $stage->where('crop_id', $filters['crop_id']));
@@ -58,15 +84,19 @@ class CropStageTimelineController extends Controller
                 $query->where(function (Builder $query) use ($matchingNames, $pattern): void {
                     $query->whereHas('cropStage', $matchingNames)
                         ->orWhereHas('cropStage.crop', $matchingNames)
-                        ->orWhereHas('cropVariety', $matchingNames)
-                        ->orWhereHas('season', $matchingNames)
-                        ->orWhereHas('source', fn (Builder $source): Builder => $source->withLocalizedTitle()
+                        ->orWhereHas('varieties', $matchingNames)
+                        ->orWhereHas('seasons', $matchingNames)
+                        ->orWhereHas('knowledgeSources', fn (Builder $source): Builder => $source->withLocalizedTitle()
                             ->whereRaw("COALESCE(requested_translation.title, default_translation.title, knowledge_sources.title) LIKE ? ESCAPE '!'", [$pattern]));
                 });
             }
             $timelines = $query->latest()->orderByDesc('id')
                 ->paginate($request->integer('per_page', 15))
-                ->appends($request->only(['keyword', 'crop_id', 'crop_stage_id', 'crop_variety_id', 'season_id', 'status', 'per_page']));
+                ->appends($request->only([
+                    'keyword', 'crop_id', 'crop_stage_id', 'crop_variety_id', 'season_id',
+                    'source_id', 'region_id', 'variety_scope', 'season_scope', 'region_scope',
+                    'status', 'per_page',
+                ]));
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to retrieve stage timelines. Please try again later.');
         }
@@ -147,7 +177,13 @@ class CropStageTimelineController extends Controller
                 if ($timeline->is_active) {
                     Gate::authorize('review-knowledge-sources');
                     $regionIds = $timeline->resolveRegionIds([]);
-                    $errors = $timeline->validationErrors($regionIds, lockRelationships: true);
+                    $errors = $timeline->validationErrors(
+                        $regionIds,
+                        lockRelationships: true,
+                        varietyIds: $timeline->resolveVarietyIds([]),
+                        seasonIds: $timeline->resolveSeasonIds([]),
+                        knowledgeSourceIds: $timeline->resolveKnowledgeSourceIds([]),
+                    );
                     if ($errors !== []) {
                         throw ValidationException::withMessages($errors);
                     }
@@ -221,11 +257,20 @@ class CropStageTimelineController extends Controller
                 Gate::authorize('review-knowledge-sources');
             }
             $regionIds = $timeline->resolveRegionIds($data);
+            $varietyIds = $timeline->resolveVarietyIds($data);
+            $seasonIds = $timeline->resolveSeasonIds($data);
+            $knowledgeSourceIds = $timeline->resolveKnowledgeSourceIds($data);
             $timeline->fill(Arr::only($data, array_diff($timeline->getFillable(), ['is_active'])));
             if (! $timeline->exists) {
                 $timeline->is_active = false;
             }
-            $errors = $timeline->validationErrors($regionIds, lockRelationships: true);
+            $errors = $timeline->validationErrors(
+                $regionIds,
+                lockRelationships: true,
+                varietyIds: $varietyIds,
+                seasonIds: $seasonIds,
+                knowledgeSourceIds: $knowledgeSourceIds,
+            );
             if ($errors !== []) {
                 throw ValidationException::withMessages($errors);
             }
@@ -240,6 +285,9 @@ class CropStageTimelineController extends Controller
             if ($syncRegions) {
                 $timeline->regions()->sync($regionIds);
             }
+            $timeline->varieties()->sync($timeline->variety_scope === 'all' ? [] : $varietyIds);
+            $timeline->seasons()->sync($timeline->season_scope === 'all' ? [] : $seasonIds);
+            $timeline->knowledgeSources()->sync($knowledgeSourceIds);
 
             return $timeline->load($this->displayRelations(includeRegions: true));
         }, attempts: 3);
@@ -253,10 +301,11 @@ class CropStageTimelineController extends Controller
         $relations = [
             'cropStage.translations' => $names,
             'cropStage.crop.translations' => $names,
-            'cropVariety.translations' => $names,
-            'season.translations' => $names,
-            'source:id,title',
-            'source.translations' => $names,
+            'varieties:id', 'varieties.translations' => $names,
+            'seasons:id,slug,start_month,end_month,icon', 'seasons.translations' => $names,
+            'knowledgeSources:id,title,publisher,source_type,source_url,language,reference_identifier,is_active,verification_status',
+            'knowledgeSources.translations' => static fn (HasMany $translations): HasMany => $translations
+                ->whereIn('locale', $locales)->select(['id', 'knowledge_source_id', 'locale', 'title']),
         ];
         if ($includeRegions) {
             $relations['regions'] = fn (BelongsToMany $regions): BelongsToMany => $regions->orderBy('regions.id');

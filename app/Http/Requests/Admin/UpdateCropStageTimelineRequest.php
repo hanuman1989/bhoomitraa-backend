@@ -20,7 +20,14 @@ class UpdateCropStageTimelineRequest extends StoreCropStageTimelineRequest
     public function rules(): array
     {
         $rules = parent::rules();
-        foreach (['crop_stage_id', 'region_scope', 'days_after_sowing_min', 'days_after_sowing_max', 'source_id'] as $field) {
+        foreach ([
+            'crop_stage_id', 'variety_scope', 'crop_variety_ids', 'season_scope', 'season_ids',
+            'region_scope', 'region_ids', 'days_after_sowing_min', 'days_after_sowing_max',
+            'knowledge_source_ids',
+        ] as $field) {
+            if (! isset($rules[$field])) {
+                continue;
+            }
             array_unshift($rules[$field], 'sometimes');
         }
 

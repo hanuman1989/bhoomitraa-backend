@@ -99,6 +99,26 @@ class KnowledgeSource extends Model
         )->withTimestamps();
     }
 
+    public function cropActivityTemplates(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            CropActivityTemplate::class,
+            'crop_activity_template_sources',
+            'source_id',
+            'crop_activity_template_id',
+        );
+    }
+
+    public function cropStageTimelines(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            CropStageTimeline::class,
+            'crop_stage_timeline_sources',
+            'source_id',
+            'crop_stage_timeline_id',
+        );
+    }
+
     public function translatedTitle(?string $locale = null): string
     {
         if (! $this->relationLoaded('translations')) {

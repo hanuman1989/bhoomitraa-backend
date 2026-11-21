@@ -105,11 +105,14 @@ class FarmerSmartTimelineGenerator
     /** @param array<string, mixed> $input */
     private function matching(Builder $query, array $input): Builder
     {
-        return $query->where('is_active', true)->where('season_id', $input['season_id'])
+        return $query->where('is_active', true)
+            ->where(fn (Builder $query): Builder => $query
+                ->where('season_scope', 'all')
+                ->orWhereHas('seasons', fn (Builder $seasons): Builder => $seasons->whereKey($input['season_id'])))
             ->where(function (Builder $query) use ($input): void {
-                $query->whereNull('crop_variety_id');
+                $query->where('variety_scope', 'all');
                 if ($input['crop_variety_id'] !== null) {
-                    $query->orWhere('crop_variety_id', $input['crop_variety_id']);
+                    $query->orWhereHas('varieties', fn (Builder $varieties): Builder => $varieties->whereKey($input['crop_variety_id']));
                 }
             })->where(fn (Builder $query): Builder => $query->where('region_scope', 'all')
             ->orWhere(fn (Builder $query): Builder => $query->where('region_scope', 'specific')
@@ -128,11 +131,11 @@ class FarmerSmartTimelineGenerator
     private function sourceRelations(): array
     {
         return [
-            'source:id,title,publisher,source_type,source_url,reference_identifier,language,is_active,verification_status',
-            'source.translations' => static fn (HasMany $translations): HasMany => $translations
+            'knowledgeSources:id,title,publisher,source_type,source_url,reference_identifier,language,is_active,verification_status',
+            'knowledgeSources.translations' => static fn (HasMany $translations): HasMany => $translations
                 ->whereIn('locale', array_unique([app()->getLocale(), config('languages.default')]))
                 ->select(['id', 'knowledge_source_id', 'locale', 'title']),
-            'source.attachments:id,knowledge_source_id,file_path',
+            'knowledgeSources.attachments:id,knowledge_source_id,file_path',
         ];
     }
 
@@ -156,7 +159,10 @@ class FarmerSmartTimelineGenerator
         $groups = [];
         foreach ($timelines as $timeline) {
             $timelineContext = ['stage_timeline_id' => $timeline->id, 'stage_timeline_name' => $stageNames[$timeline->crop_stage_id] ?? null];
-            $reason = ! $stages->has($timeline->crop_stage_id) ? 'stage_ineligible' : $this->sourceReason($timeline->source, $sourceEligibility);
+            $timelineSource = $timeline->knowledgeSources->first();
+            $reason = ! $stages->has($timeline->crop_stage_id)
+                ? 'stage_ineligible'
+                : ($timelineSource === null ? null : $this->sourceReason($timelineSource, $sourceEligibility));
             if ($reason !== null) {
                 $this->warning($warnings, 'STAGE_TIMELINE_INELIGIBLE', 'A matching stage timeline failed publication eligibility.', [...$timelineContext, 'reason' => $reason]);
 
@@ -169,7 +175,7 @@ class FarmerSmartTimelineGenerator
                 continue;
             }
             $groups[$timeline->crop_stage_id][] = ['timeline' => $timeline, 'range' => $range,
-                'rank' => ($timeline->crop_variety_id === null ? 0 : 2) + ($timeline->region_scope === 'specific' ? 1 : 0)];
+                'rank' => ($timeline->variety_scope === 'all' ? 0 : 2) + ($timeline->region_scope === 'specific' ? 1 : 0)];
         }
         $result = [];
         foreach ($stages as $stage) {
@@ -198,12 +204,15 @@ class FarmerSmartTimelineGenerator
                 continue;
             }
             $timeline = $match['timeline'];
+            $timelineSource = $timeline->knowledgeSources->first();
+            $sourceIds = $top->flatMap(fn (array $item): array => $item['timeline']->knowledgeSources->modelKeys())
+                ->unique()->values()->all();
             $result[] = [
                 'crop_stage_id' => $stage->id, 'stage_timeline_id' => $timeline->id, 'stage_timeline_ids' => $ids,
                 'name' => $stageName, 'sequence' => $stage->sequence,
-                ...$window, 'is_estimated' => true, 'source_id' => $timeline->source_id,
-                'source_ids' => $top->map(fn (array $match): int => $match['timeline']->source_id)->unique()->values()->all(),
-                'source' => $this->sourceSummary($timeline->source, $warnings),
+                ...$window, 'is_estimated' => true, 'source_id' => $timelineSource?->id,
+                'source_ids' => $sourceIds,
+                'source' => $timelineSource === null ? null : $this->sourceSummary($timelineSource, $warnings),
             ];
         }
 
@@ -221,7 +230,11 @@ class FarmerSmartTimelineGenerator
     {
         $templates = $this->matching(CropActivityTemplate::query(), $input)->where('crop_id', $input['crop_id'])
             ->with([
-                ...$this->sourceRelations(), 'category.translations' => $this->names(),
+                ...$this->sourceRelations(), 'knowledgeSources:id,title,publisher,source_type,source_url,reference_identifier,language,is_active,verification_status',
+                'knowledgeSources.translations' => static fn (HasMany $translations): HasMany => $translations
+                    ->whereIn('locale', array_unique([app()->getLocale(), config('languages.default')]))
+                    ->select(['id', 'knowledge_source_id', 'locale', 'title']),
+                'category.translations' => $this->names(),
                 'translations' => static fn (HasMany $translations): HasMany => $translations
                     ->whereIn('locale', array_unique([app()->getLocale(), config('languages.default'), ...CropActivityTemplate::REQUIRED_LOCALES])),
             ])->withExists(['translations as incomplete_publication_content' => fn (Builder $translations): Builder => $translations
@@ -255,7 +268,10 @@ class FarmerSmartTimelineGenerator
             if ($template->incomplete_publication_content || ! $this->requiredTitles($template)) {
                 $reason ??= 'content_incomplete';
             }
-            $reason ??= $this->sourceReason($template->source, $sourceEligibility);
+            $templateSource = $template->knowledgeSources->first();
+            $reason ??= $template->knowledgeSources->isEmpty()
+                ? null
+                : $this->sourceReason($templateSource, $sourceEligibility);
             if ($reason !== null) {
                 $this->warning($warnings, 'ACTIVITY_TEMPLATE_INELIGIBLE', 'A matching activity template failed publication eligibility.', [...$templateContext, 'reason' => $reason]);
 
@@ -281,7 +297,10 @@ class FarmerSmartTimelineGenerator
                 'category_id' => $category->id, 'category_name' => $this->name($category, 'activity_category', $warnings),
                 'crop_stage_id' => $template->crop_stage_id, 'crop_stage_name' => $stage === null ? null : $this->name($stage, 'crop_stage', $warnings),
                 'schedule_type' => $template->schedule_type, ...$window, 'priority' => $template->priority,
-                'source_id' => $template->source_id, 'source' => $this->sourceSummary($template->source, $warnings), 'status' => 'planned',
+                'source_id' => $templateSource?->id,
+                'source_ids' => $template->knowledgeSources->modelKeys(),
+                'source' => $templateSource === null ? null : $this->sourceSummary($templateSource, $warnings),
+                'status' => 'planned',
             ];
         }
         usort($result, static fn (array $left, array $right): int => [$left['start_date'], $left['end_date'], $left['template_id']] <=> [$right['start_date'], $right['end_date'], $right['template_id']]);

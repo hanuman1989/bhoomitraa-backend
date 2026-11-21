@@ -25,7 +25,16 @@ class UpdateCropActivityTemplateRequest extends StoreCropActivityTemplateRequest
     public function rules(): array
     {
         $rules = parent::rules();
-        foreach (['crop_id', 'category_id', 'season_id', 'schedule_type', 'start_offset_days', 'end_offset_days', 'region_scope', 'source_id', 'translations'] as $field) {
+        foreach ([
+            'crop_id', 'category_id', 'crop_stage_id', 'variety_scope', 'crop_variety_ids', 'season_scope',
+            'season_ids', 'schedule_type', 'schedule_basis', 'start_offset_days', 'end_offset_days',
+            'activity_type', 'allow_status_update', 'allow_expenses', 'allow_labour', 'allow_notes',
+            'allow_attachments', 'allow_rescheduling', 'smart_actions', 'knowledge_source_ids',
+            'region_scope', 'region_ids', 'priority', 'translations',
+        ] as $field) {
+            if (! isset($rules[$field])) {
+                continue;
+            }
             array_unshift($rules[$field], 'sometimes');
         }
         $rules['translations.*.title'] = ['sometimes', 'required', 'string', 'max:200'];

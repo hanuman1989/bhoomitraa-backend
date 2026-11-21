@@ -45,7 +45,13 @@ class UpdateCropActivityTemplateStatusRequest extends FormRequest
             }
             $candidate = clone $template;
             $candidate->is_active = true;
-            foreach ($candidate->validationErrors($candidate->resolveRegionIds([])) as $field => $messages) {
+            foreach ($candidate->validationErrors(
+                $candidate->resolveRegionIds([]),
+                lockRelationships: false,
+                varietyIds: $candidate->resolveVarietyIds([]),
+                seasonIds: $candidate->resolveSeasonIds([]),
+                knowledgeSourceIds: $candidate->resolveKnowledgeSourceIds([]),
+            ) as $field => $messages) {
                 foreach ($messages as $message) {
                     $validator->errors()->add($field, $message);
                 }

@@ -88,7 +88,18 @@ class UpdateCropVarietyRequest extends StoreCropVarietyRequest
                     $validator->errors()->add('maturity_days_max', 'The maximum maturity days must be greater than or equal to the minimum maturity days.');
                 }
 
-                foreach ($cropVariety->publicationErrors($translations) as $field => $messages) {
+                $knowledgeSourceIds = null;
+                if (array_key_exists('knowledge_sources', $data) || array_key_exists('source_id', $data)) {
+                    $knowledgeSourceIds = collect($data['knowledge_sources'] ?? [])
+                        ->map(fn (mixed $sourceId): int => (int) $sourceId)
+                        ->values()
+                        ->all();
+                    if ($knowledgeSourceIds === [] && array_key_exists('source_id', $data) && $data['source_id'] !== null) {
+                        $knowledgeSourceIds = [(int) $data['source_id']];
+                    }
+                }
+
+                foreach ($cropVariety->publicationErrors($translations, knowledgeSourceIds: $knowledgeSourceIds) as $field => $messages) {
                     foreach ($messages as $message) {
                         $validator->errors()->add($field, $message);
                     }
