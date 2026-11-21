@@ -276,6 +276,46 @@ test('active maturity information requires an active verified source', function 
     }
 })->with(['verified active' => ['active'], 'pending inactive' => ['pending']]);
 
+test('active maturity information accepts a selected active verified knowledge source on create and update', function () {
+    $admin = AdminUser::factory()->create();
+    $crop = Crop::factory()->published()->create();
+    $source = KnowledgeSource::factory()->active()->create();
+    $token = $admin->createToken('test', ['admin'])->plainTextToken;
+    $payload = cropVarietyPayload($crop, [
+        'is_active' => true,
+        'maturity_days_min' => 120,
+        'maturity_days_max' => 135,
+        'knowledge_sources' => [$source->id],
+    ]);
+
+    $created = $this->withToken($token)
+        ->postJson('/api/admin/crop-varieties', $payload)
+        ->assertCreated()
+        ->assertJsonPath('data.is_active', true);
+    $varietyId = $created->json('data.id');
+    $this->assertDatabaseHas('crop_variety_sources', [
+        'crop_variety_id' => $varietyId,
+        'source_id' => $source->id,
+    ]);
+
+    $replacementSource = KnowledgeSource::factory()->active()->create();
+    $this->withToken($token)
+        ->patchJson('/api/admin/crop-varieties/'.$varietyId, [
+            'knowledge_sources' => [$replacementSource->id],
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.is_active', true);
+
+    $this->assertDatabaseHas('crop_variety_sources', [
+        'crop_variety_id' => $varietyId,
+        'source_id' => $replacementSource->id,
+    ]);
+    $this->assertDatabaseMissing('crop_variety_sources', [
+        'crop_variety_id' => $varietyId,
+        'source_id' => $source->id,
+    ]);
+});
+
 test('admins update metadata and supplied translation fields without deleting omitted values', function () {
     $admin = AdminUser::factory()->create();
     $crop = Crop::factory()->withNames()->create();

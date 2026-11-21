@@ -37,7 +37,13 @@ class UpdateCropStageTimelineStatusRequest extends FormRequest
             }
             $candidate = clone $timeline;
             $candidate->is_active = true;
-            foreach ($candidate->validationErrors($timeline->resolveRegionIds([])) as $field => $messages) {
+            foreach ($candidate->validationErrors(
+                $timeline->resolveRegionIds([]),
+                false,
+                $candidate->resolveVarietyIds([]),
+                $candidate->resolveSeasonIds([]),
+                $candidate->resolveKnowledgeSourceIds([]),
+            ) as $field => $messages) {
                 foreach ($messages as $message) {
                     $validator->errors()->add($field, $message);
                 }

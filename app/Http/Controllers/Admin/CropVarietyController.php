@@ -236,7 +236,11 @@ class CropVarietyController extends Controller
             }
 
             $variety->fill($attributes);
-            $errors = $variety->publicationErrors($translations, lockRelationships: true);
+            $errors = $variety->publicationErrors(
+                $translations,
+                lockRelationships: true,
+                knowledgeSourceIds: $knowledgeSourceIds,
+            );
             if ($errors !== []) {
                 throw ValidationException::withMessages($errors);
             }

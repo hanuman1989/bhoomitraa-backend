@@ -6,6 +6,7 @@ use Database\Factories\SeasonFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
@@ -56,6 +57,26 @@ class Season extends Model
     public function translations(): HasMany
     {
         return $this->hasMany(SeasonTranslation::class);
+    }
+
+    public function cropActivityTemplates(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            CropActivityTemplate::class,
+            'crop_activity_template_seasons',
+            'season_id',
+            'crop_activity_template_id',
+        );
+    }
+
+    public function cropStageTimelines(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            CropStageTimeline::class,
+            'crop_stage_timeline_seasons',
+            'season_id',
+            'crop_stage_timeline_id',
+        );
     }
 
     public function seedRates(): HasMany

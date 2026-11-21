@@ -159,7 +159,12 @@ test('returns presentation metadata in every existing nested administrative seas
         'crop-seed-rates' => CropSeedRate::factory()->create(['season_id' => $season->id]),
         'crop-yield-benchmarks' => CropYieldBenchmark::factory()->create(['season_id' => $season->id]),
         'fertilizer-recommendations' => FertilizerRecommendation::factory()->withNutrients()->create(['season_id' => $season->id]),
-        'crop-stage-timelines' => CropStageTimeline::factory()->create(['season_id' => $season->id]),
+        'crop-stage-timelines' => (function () use ($season): CropStageTimeline {
+            $timeline = CropStageTimeline::factory()->create(['season_scope' => 'specific']);
+            $timeline->seasons()->attach($season);
+
+            return $timeline;
+        })(),
         'crop-activity-templates' => CropActivityTemplate::factory()->create(['season_id' => $season->id]),
     };
 

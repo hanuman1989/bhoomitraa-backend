@@ -27,6 +27,16 @@ class CropActivityTemplate extends Model
     /** @var list<string> */
     public const REGION_SCOPES = ['all', 'specific'];
 
+    public const VARIETY_SCOPES = ['all', 'specific'];
+
+    public const SEASON_SCOPES = ['all', 'specific'];
+
+    public const SCHEDULE_BASES = ['fixed_offsets', 'growth_stage'];
+
+    public const ACTIVITY_TYPES = ['information', 'observation', 'task'];
+
+    public const TRIGGER_TYPES = ['scheduled'];
+
     /** @var list<string> */
     public const PRIORITIES = ['low', 'medium', 'high'];
 
@@ -35,12 +45,21 @@ class CropActivityTemplate extends Model
 
     /** @var list<string> */
     protected $fillable = [
-        'crop_id', 'crop_variety_id', 'category_id', 'crop_stage_id', 'season_id',
-        'schedule_type', 'start_offset_days', 'end_offset_days', 'region_scope', 'priority', 'source_id', 'is_active',
+        'crop_id', 'category_id', 'crop_stage_id', 'variety_scope', 'season_scope', 'region_scope',
+        'schedule_type', 'schedule_basis', 'start_offset_days', 'end_offset_days', 'activity_type',
+        'allow_status_update', 'allow_expenses', 'allow_labour', 'allow_notes',
+        'allow_attachments', 'allow_rescheduling', 'smart_actions', 'trigger_type', 'trigger_config',
+        'priority', 'is_active',
     ];
 
     /** @var array<string, mixed> */
-    protected $attributes = ['priority' => 'medium', 'is_active' => false];
+    protected $attributes = [
+        'variety_scope' => 'all', 'season_scope' => 'all', 'schedule_basis' => 'fixed_offsets',
+        'activity_type' => 'task', 'allow_status_update' => true, 'allow_expenses' => false,
+        'allow_labour' => false, 'allow_notes' => true, 'allow_attachments' => false,
+        'allow_rescheduling' => false, 'trigger_type' => 'scheduled',
+        'priority' => 'medium', 'is_active' => false,
+    ];
 
     protected $dateFormat = 'Y-m-d H:i:s.u';
 
@@ -48,20 +67,17 @@ class CropActivityTemplate extends Model
     protected function casts(): array
     {
         return [
-            'crop_id' => 'integer', 'crop_variety_id' => 'integer', 'category_id' => 'integer',
-            'crop_stage_id' => 'integer', 'season_id' => 'integer', 'source_id' => 'integer',
-            'start_offset_days' => 'integer', 'end_offset_days' => 'integer', 'is_active' => 'boolean',
+            'crop_id' => 'integer', 'category_id' => 'integer', 'crop_stage_id' => 'integer',
+            'start_offset_days' => 'integer', 'end_offset_days' => 'integer',
+            'allow_status_update' => 'boolean', 'allow_expenses' => 'boolean', 'allow_labour' => 'boolean',
+            'allow_notes' => 'boolean', 'allow_attachments' => 'boolean', 'allow_rescheduling' => 'boolean',
+            'smart_actions' => 'array', 'trigger_config' => 'array', 'is_active' => 'boolean',
         ];
     }
 
     public function crop(): BelongsTo
     {
         return $this->belongsTo(Crop::class);
-    }
-
-    public function cropVariety(): BelongsTo
-    {
-        return $this->belongsTo(CropVariety::class);
     }
 
     public function category(): BelongsTo
@@ -74,14 +90,19 @@ class CropActivityTemplate extends Model
         return $this->belongsTo(CropStage::class);
     }
 
-    public function season(): BelongsTo
+    public function varieties(): BelongsToMany
     {
-        return $this->belongsTo(Season::class);
+        return $this->belongsToMany(CropVariety::class, 'crop_activity_template_varieties', 'crop_activity_template_id', 'crop_variety_id');
     }
 
-    public function source(): BelongsTo
+    public function seasons(): BelongsToMany
     {
-        return $this->belongsTo(KnowledgeSource::class, 'source_id');
+        return $this->belongsToMany(Season::class, 'crop_activity_template_seasons', 'crop_activity_template_id', 'season_id');
+    }
+
+    public function knowledgeSources(): BelongsToMany
+    {
+        return $this->belongsToMany(KnowledgeSource::class, 'crop_activity_template_sources', 'crop_activity_template_id', 'source_id');
     }
 
     public function translations(): HasMany
@@ -137,6 +158,48 @@ class CropActivityTemplate extends Model
         return array_map('intval', $this->regions->modelKeys());
     }
 
+    /** @param array<string, mixed> $input @return list<int> */
+    public function resolveVarietyIds(array $input): array
+    {
+        if (array_key_exists('crop_variety_ids', $input)) {
+            return array_values(array_map('intval', $input['crop_variety_ids']));
+        }
+        if (($input['variety_scope'] ?? null) === 'all' || ! $this->exists) {
+            return [];
+        }
+        $this->loadMissing('varieties');
+
+        return array_map('intval', $this->varieties->modelKeys());
+    }
+
+    /** @param array<string, mixed> $input @return list<int> */
+    public function resolveSeasonIds(array $input): array
+    {
+        if (array_key_exists('season_ids', $input)) {
+            return array_values(array_map('intval', $input['season_ids']));
+        }
+        if (($input['season_scope'] ?? null) === 'all' || ! $this->exists) {
+            return [];
+        }
+        $this->loadMissing('seasons');
+
+        return array_map('intval', $this->seasons->modelKeys());
+    }
+
+    /** @param array<string, mixed> $input @return list<int> */
+    public function resolveKnowledgeSourceIds(array $input): array
+    {
+        if (array_key_exists('knowledge_source_ids', $input)) {
+            return array_values(array_map('intval', $input['knowledge_source_ids']));
+        }
+        if (! $this->exists) {
+            return [];
+        }
+        $this->loadMissing('knowledgeSources');
+
+        return array_map('intval', $this->knowledgeSources->modelKeys());
+    }
+
     /**
      * Validate effective values and repeat under parent locks before persistence.
      *
@@ -144,8 +207,14 @@ class CropActivityTemplate extends Model
      * @param  array<string, array{title?: string, description?: string|null, instructions?: string|null}>  $translations
      * @return array<string, list<string>>
      */
-    public function validationErrors(array $regionIds, array $translations = [], bool $lockRelationships = false): array
-    {
+    public function validationErrors(
+        array $regionIds,
+        array $translations = [],
+        bool $lockRelationships = false,
+        array $varietyIds = [],
+        array $seasonIds = [],
+        array $knowledgeSourceIds = [],
+    ): array {
         $errors = [];
         if ($this->exists && $this->isDirty('crop_id')) {
             $errors['crop_id'] = ['The parent crop cannot be changed after creation.'];
@@ -153,13 +222,54 @@ class CropActivityTemplate extends Model
         if (! in_array($this->schedule_type, self::SCHEDULE_TYPES, true)) {
             $errors['schedule_type'] = ['Select a supported activity schedule.'];
         }
-        foreach (['start_offset_days', 'end_offset_days'] as $field) {
-            if ($this->{$field} === null || $this->{$field} < 0 || $this->{$field} > self::MAX_OFFSET_DAYS) {
-                $errors[$field] = ['Offsets must be integers between 0 and '.self::MAX_OFFSET_DAYS.'.'];
+        if (! in_array($this->schedule_basis, self::SCHEDULE_BASES, true)) {
+            $errors['schedule_basis'] = ['Select a supported schedule basis.'];
+        } elseif ($this->schedule_basis === 'fixed_offsets') {
+            foreach (['start_offset_days', 'end_offset_days'] as $field) {
+                if ($this->{$field} === null || $this->{$field} < 0 || $this->{$field} > self::MAX_OFFSET_DAYS) {
+                    $errors[$field] = ['Offsets must be integers between 0 and '.self::MAX_OFFSET_DAYS.'.'];
+                }
+            }
+            if (! $errors && $this->start_offset_days > $this->end_offset_days) {
+                $errors['end_offset_days'] = ['The end offset must be greater than or equal to the start offset.'];
+            }
+        } elseif ($this->schedule_basis === 'growth_stage') {
+            if ($this->schedule_type !== 'after_sowing') {
+                $errors['schedule_type'] = ['Growth-stage scheduling is supported only after sowing.'];
+            }
+            if ($this->crop_stage_id === null) {
+                $errors['crop_stage_id'] = ['A growth stage is required for growth-stage scheduling.'];
+            }
+            if ($this->start_offset_days !== null || $this->end_offset_days !== null) {
+                $errors['start_offset_days'] = ['Growth-stage scheduling does not accept fixed offsets.'];
+                $errors['end_offset_days'] = ['Growth-stage scheduling does not accept fixed offsets.'];
             }
         }
-        if ($this->start_offset_days > $this->end_offset_days) {
-            $errors['end_offset_days'] = ['The end offset must be greater than or equal to the start offset.'];
+        if (! in_array($this->activity_type, self::ACTIVITY_TYPES, true)) {
+            $errors['activity_type'] = ['Select a supported activity type.'];
+        } elseif ($this->activity_type === 'information') {
+            foreach (['allow_status_update', 'allow_expenses', 'allow_labour', 'allow_notes', 'allow_attachments', 'allow_rescheduling'] as $field) {
+                if ($this->{$field}) {
+                    $errors[$field] = ['Information activities cannot enable standard management features.'];
+                }
+            }
+        } elseif ($this->activity_type === 'observation' && $this->allow_status_update) {
+            $errors['allow_status_update'] = ['Observation activities cannot enable status updates.'];
+        }
+        if (! in_array($this->trigger_type, self::TRIGGER_TYPES, true)) {
+            $errors['trigger_type'] = ['Only scheduled triggers are supported.'];
+        }
+        if ($this->trigger_config !== null && $this->trigger_config !== []) {
+            $errors['trigger_config'] = ['Trigger configuration is not editable for scheduled templates.'];
+        }
+        foreach (array_values($this->smart_actions ?? []) as $action) {
+            if (! is_string($action) || ! in_array($action, config('crop_activity_templates.smart_actions', []), true)) {
+                $errors['smart_actions'] = ['Select only supported smart action identifiers.'];
+                break;
+            }
+        }
+        if (count($this->smart_actions ?? []) !== count(array_unique($this->smart_actions ?? []))) {
+            $errors['smart_actions'] = ['Smart action identifiers must not be duplicated.'];
         }
         if (! in_array($this->priority, self::PRIORITIES, true)) {
             $errors['priority'] = ['Select a valid activity priority.'];
@@ -167,10 +277,10 @@ class CropActivityTemplate extends Model
 
         $related = [];
         foreach ([
-            'crop_id' => Crop::class, 'crop_variety_id' => CropVariety::class, 'category_id' => ActivityCategory::class,
-            'crop_stage_id' => CropStage::class, 'season_id' => Season::class, 'source_id' => KnowledgeSource::class,
+            'crop_id' => Crop::class, 'category_id' => ActivityCategory::class,
+            'crop_stage_id' => CropStage::class,
         ] as $field => $model) {
-            if ($this->{$field} === null && in_array($field, ['crop_variety_id', 'crop_stage_id'], true)) {
+            if ($this->{$field} === null && $field === 'crop_stage_id') {
                 continue;
             }
             $record = $model::query()->when($lockRelationships, fn (Builder $query): Builder => $query->lockForUpdate())->find($this->{$field});
@@ -183,7 +293,7 @@ class CropActivityTemplate extends Model
             if ($this->is_active && ! $record->is_active) {
                 $errors[$field] = ['An active template requires this related record to be active.'];
             }
-            if (in_array($field, ['crop_variety_id', 'crop_stage_id'], true) && (int) $record->crop_id !== $this->crop_id) {
+            if ($field === 'crop_stage_id' && (int) $record->crop_id !== $this->crop_id) {
                 $errors[$field] = ['The selected record must belong to the template crop.'];
             }
         }
@@ -192,13 +302,68 @@ class CropActivityTemplate extends Model
             && (! $category->is_active || $category->activationErrors() !== [])) {
             $errors['category_id'] = ['Select an active, released activity category with its required names.'];
         }
-        $source = $related['source_id'] ?? null;
-        if ($this->is_active && $source !== null
-            && (! $source->is_active || $source->verification_status !== 'verified' || ! $source->hasUsableReference())) {
-            $errors['source_id'] = ['Publication requires an active, verified knowledge source with a usable reference.'];
+        $relationshipErrors = $this->applicabilityErrors($varietyIds, $seasonIds, $knowledgeSourceIds, $lockRelationships);
+
+        return [...$errors, ...$relationshipErrors, ...$this->regionErrors($regionIds, $lockRelationships), ...$this->contentErrors($translations)];
+    }
+
+    /** @param list<int> $varietyIds @param list<int> $seasonIds @param list<int> $knowledgeSourceIds @return array<string,list<string>> */
+    private function applicabilityErrors(array $varietyIds, array $seasonIds, array $knowledgeSourceIds, bool $lockRelationships): array
+    {
+        $errors = [];
+        if (! in_array($this->variety_scope, self::VARIETY_SCOPES, true)) {
+            $errors['variety_scope'] = ['The variety scope must be all or specific.'];
+        } elseif ($this->variety_scope === 'all' && $varietyIds !== []) {
+            $errors['crop_variety_ids'] = ['All-varieties templates cannot contain variety selections.'];
+        } elseif ($this->variety_scope === 'specific' && $varietyIds === []) {
+            $errors['crop_variety_ids'] = ['Select at least one crop variety.'];
+        }
+        $varieties = CropVariety::query()->whereIn('id', $varietyIds)->orderBy('id')
+            ->when($lockRelationships, fn (Builder $query): Builder => $query->lockForUpdate())
+            ->get(['id', 'crop_id', 'is_active'])->keyBy('id');
+        foreach ($varietyIds as $index => $id) {
+            $variety = $varieties->get($id);
+            if ($variety === null) {
+                $errors['crop_variety_ids.'.$index] = ['Select an existing crop variety.'];
+            } elseif ((int) $variety->crop_id !== $this->crop_id) {
+                $errors['crop_variety_ids.'.$index] = ['The selected variety must belong to the template crop.'];
+            } elseif ($this->is_active && ! $variety->is_active) {
+                $errors['crop_variety_ids.'.$index] = ['An active template requires active varieties.'];
+            }
         }
 
-        return [...$errors, ...$this->regionErrors($regionIds, $lockRelationships), ...$this->contentErrors($translations)];
+        if (! in_array($this->season_scope, self::SEASON_SCOPES, true)) {
+            $errors['season_scope'] = ['The season scope must be all or specific.'];
+        } elseif ($this->season_scope === 'all' && $seasonIds !== []) {
+            $errors['season_ids'] = ['All-seasons templates cannot contain season selections.'];
+        } elseif ($this->season_scope === 'specific' && $seasonIds === []) {
+            $errors['season_ids'] = ['Select at least one season.'];
+        }
+        $seasons = Season::query()->whereIn('id', $seasonIds)->orderBy('id')
+            ->when($lockRelationships, fn (Builder $query): Builder => $query->lockForUpdate())
+            ->get(['id', 'is_active'])->keyBy('id');
+        foreach ($seasonIds as $index => $id) {
+            $season = $seasons->get($id);
+            if ($season === null) {
+                $errors['season_ids.'.$index] = ['Select an existing season.'];
+            } elseif ($this->is_active && ! $season->is_active) {
+                $errors['season_ids.'.$index] = ['An active template requires active seasons.'];
+            }
+        }
+
+        $sources = KnowledgeSource::query()->whereIn('id', $knowledgeSourceIds)->orderBy('id')
+            ->when($lockRelationships, fn (Builder $query): Builder => $query->lockForUpdate())
+            ->get()->keyBy('id');
+        foreach ($knowledgeSourceIds as $index => $id) {
+            $source = $sources->get($id);
+            if ($source === null) {
+                $errors['knowledge_source_ids.'.$index] = ['Select an existing knowledge source.'];
+            } elseif ($this->is_active && (! $source->is_active || $source->verification_status !== 'verified' || ! $source->hasUsableReference())) {
+                $errors['knowledge_source_ids.'.$index] = ['Published templates require active, verified knowledge sources with usable references.'];
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -272,14 +437,12 @@ class CropActivityTemplate extends Model
     public function potentialOverlapIds(array $regionIds): array
     {
         $query = self::query()->where('is_active', true)->where('crop_id', $this->crop_id)
-            ->where('category_id', $this->category_id)->where('season_id', $this->season_id)
+            ->where('category_id', $this->category_id)
             ->where('schedule_type', $this->schedule_type)
             ->where('start_offset_days', '<=', $this->end_offset_days)->where('end_offset_days', '>=', $this->start_offset_days)
             ->when($this->exists, fn (Builder $query): Builder => $query->whereKeyNot($this->id));
-        foreach (['crop_variety_id', 'crop_stage_id'] as $field) {
-            if ($this->{$field} !== null) {
-                $query->where(fn (Builder $query): Builder => $query->whereNull($field)->orWhere($field, $this->{$field}));
-            }
+        if ($this->crop_stage_id !== null) {
+            $query->where(fn (Builder $query): Builder => $query->whereNull('crop_stage_id')->orWhere('crop_stage_id', $this->crop_stage_id));
         }
         if ($this->region_scope === 'specific') {
             $query->where(fn (Builder $query): Builder => $query->where('region_scope', 'all')
@@ -293,7 +456,10 @@ class CropActivityTemplate extends Model
     public function hasExternalReferences(): bool
     {
         foreach (Schema::getTables() as $table) {
-            if (in_array($table['name'], ['crop_activity_template_translations', 'crop_activity_template_regions'], true)) {
+            if (in_array($table['name'], [
+                'crop_activity_template_translations', 'crop_activity_template_regions',
+                'crop_activity_template_varieties', 'crop_activity_template_seasons', 'crop_activity_template_sources',
+            ], true)) {
                 continue;
             }
             foreach (Schema::getForeignKeys($table['name']) as $foreignKey) {

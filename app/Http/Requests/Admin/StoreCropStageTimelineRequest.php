@@ -20,14 +20,19 @@ class StoreCropStageTimelineRequest extends FormRequest
     {
         return [
             'crop_stage_id' => ['required', 'integer', 'min:1', Rule::exists('crop_stages', 'id')],
-            'crop_variety_id' => ['sometimes', 'nullable', 'integer', 'min:1', Rule::exists('crop_varieties', 'id')],
-            'season_id' => ['sometimes', 'nullable', 'integer', 'min:1', Rule::exists('seasons', 'id')],
+            'variety_scope' => ['required', 'string', Rule::in(CropStageTimeline::VARIETY_SCOPES)],
+            'crop_variety_ids' => ['sometimes', 'array', 'list'],
+            'crop_variety_ids.*' => ['required', 'integer', 'min:1', 'distinct', Rule::exists('crop_varieties', 'id')],
+            'season_scope' => ['required', 'string', Rule::in(CropStageTimeline::SEASON_SCOPES)],
+            'season_ids' => ['sometimes', 'array', 'list'],
+            'season_ids.*' => ['required', 'integer', 'min:1', 'distinct', Rule::exists('seasons', 'id')],
             'region_scope' => ['required', 'string', Rule::in(CropStageTimeline::REGION_SCOPES)],
             'region_ids' => ['sometimes', 'array', 'list'],
             'region_ids.*' => ['required', 'integer', 'min:1', 'distinct', Rule::exists('regions', 'id')->where('region_type', 'district')],
             'days_after_sowing_min' => ['required', 'integer', 'min:0', 'max:4294967295'],
             'days_after_sowing_max' => ['required', 'integer', 'min:0', 'max:4294967295'],
-            'source_id' => ['required', 'integer', 'min:1', Rule::exists('knowledge_sources', 'id')],
+            'knowledge_source_ids' => ['sometimes', 'array', 'list'],
+            'knowledge_source_ids.*' => ['required', 'integer', 'min:1', 'distinct', Rule::exists('knowledge_sources', 'id')],
         ];
     }
 
@@ -36,7 +41,9 @@ class StoreCropStageTimelineRequest extends FormRequest
     {
         return [function (Validator $validator): void {
             $metadataFields = array_diff((new CropStageTimeline)->getFillable(), ['is_active']);
-            foreach (array_diff(array_keys($this->all()), [...$metadataFields, 'region_ids', '_method']) as $field) {
+            foreach (array_diff(array_keys($this->all()), [
+                ...$metadataFields, 'crop_variety_ids', 'season_ids', 'knowledge_source_ids', 'region_ids', '_method',
+            ]) as $field) {
                 $validator->errors()->add($field, 'The '.$field.' field is not allowed.');
             }
             if ($validator->errors()->isNotEmpty()) {
@@ -47,12 +54,21 @@ class StoreCropStageTimelineRequest extends FormRequest
             $timeline = $timeline instanceof CropStageTimeline ? $timeline : new CropStageTimeline;
             $data = $validator->getData();
             $regionIds = $timeline->resolveRegionIds($data);
+            $varietyIds = $timeline->resolveVarietyIds($data);
+            $seasonIds = $timeline->resolveSeasonIds($data);
+            $knowledgeSourceIds = $timeline->resolveKnowledgeSourceIds($data);
             $candidate = clone $timeline;
             $candidate->fill(Arr::only($data, $metadataFields));
             if (! $candidate->exists) {
                 $candidate->is_active = false;
             }
-            foreach ($candidate->validationErrors($regionIds) as $field => $messages) {
+            foreach ($candidate->validationErrors(
+                $regionIds,
+                false,
+                $varietyIds,
+                $seasonIds,
+                $knowledgeSourceIds,
+            ) as $field => $messages) {
                 foreach ($messages as $message) {
                     $validator->errors()->add($field, $message);
                 }

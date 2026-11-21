@@ -52,6 +52,26 @@ class CropVariety extends Model
         return $this->belongsTo(Crop::class);
     }
 
+    public function cropActivityTemplates(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            CropActivityTemplate::class,
+            'crop_activity_template_varieties',
+            'crop_variety_id',
+            'crop_activity_template_id',
+        );
+    }
+
+    public function cropStageTimelines(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            CropStageTimeline::class,
+            'crop_stage_timeline_varieties',
+            'crop_variety_id',
+            'crop_stage_timeline_id',
+        );
+    }
+
     public function translations(): HasMany
     {
         return $this->hasMany(CropVarietyTranslation::class);
@@ -121,10 +141,14 @@ class CropVariety extends Model
      * Recheck publication requirements while the parent records are locked.
      *
      * @param  array<string, array{name?: string, description?: string|null, region_notes?: string|null}>  $translations
+     * @param  list<int>|null  $knowledgeSourceIds
      * @return array<string, list<string>>
      */
-    public function publicationErrors(array $translations = [], bool $lockRelationships = false): array
-    {
+    public function publicationErrors(
+        array $translations = [],
+        bool $lockRelationships = false,
+        ?array $knowledgeSourceIds = null,
+    ): array {
         $cropQuery = Crop::query()->whereKey($this->crop_id);
         if ($lockRelationships) {
             $cropQuery->lockForUpdate();
@@ -160,8 +184,10 @@ class CropVariety extends Model
             return $errors;
         }
 
-        $sourceIds = $this->knowledgeSources()->pluck('knowledge_sources.id');
-        if ($this->source_id !== null && ! $sourceIds->contains((int) $this->source_id)) {
+        $sourceIds = $knowledgeSourceIds === null
+            ? $this->knowledgeSources()->pluck('knowledge_sources.id')
+            : collect($knowledgeSourceIds);
+        if ($knowledgeSourceIds === null && $this->source_id !== null && ! $sourceIds->contains((int) $this->source_id)) {
             $sourceIds->push((int) $this->source_id);
         }
 
