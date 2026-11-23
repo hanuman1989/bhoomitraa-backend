@@ -41,7 +41,9 @@ class CropActivityTemplateResource extends JsonResource
                 ],
             )->all()),
             'region_scope' => $this->region_scope,
-            'region_ids' => $this->whenLoaded('regions', fn (): array => array_map('intval', $this->regions->modelKeys())),
+            'region_ids' => $this->resource->relationLoaded('regions')
+                ? array_map('intval', $this->regions->modelKeys())
+                : $this->when($this->resource->hasAttribute('listed_region_ids'), fn (): array => $this->listed_region_ids),
             'regions' => $this->whenLoaded('regions', fn (): array => $this->regions->map(
                 fn (Region $region): array => [
                     'id' => $region->id,
@@ -54,6 +56,9 @@ class CropActivityTemplateResource extends JsonResource
             'schedule_basis' => $this->schedule_basis,
             'start_offset_days' => $this->start_offset_days,
             'end_offset_days' => $this->end_offset_days,
+            'timing_exception_reason' => $this->timing_exception_reason,
+            'scheduling_reconfirmation_required' => (bool) $this->scheduling_reconfirmation_required,
+            'display_order' => (int) $this->display_order,
             'activity_type' => $this->activity_type,
             'allow_status_update' => (bool) $this->allow_status_update,
             'allow_expenses' => (bool) $this->allow_expenses,
@@ -78,6 +83,8 @@ class CropActivityTemplateResource extends JsonResource
             )->all()),
             'priority' => $this->priority,
             'is_active' => (bool) $this->is_active,
+            'version' => (int) $this->version,
+            'creation_request_id' => $this->creation_request_id,
             'title' => $this->resource->getAttribute('localized_title')
                 ?? $this->whenLoaded('translations', fn (): ?string => $this->resource->translation($locale)?->title, null),
             'description' => $this->whenLoaded('translations', fn (): ?string => $this->resource->translation($locale)?->description),
@@ -85,6 +92,9 @@ class CropActivityTemplateResource extends JsonResource
             'translations' => $this->whenLoaded('translations', fn (): object => (object) $this->translations->mapWithKeys(
                 fn (CropActivityTemplateTranslation $translation): array => [$translation->locale => new CropActivityTemplateTranslationResource($translation)],
             )->all()),
+            'translation_titles' => $this->when($this->resource->hasAttribute('translation_titles'), fn (): object => (object) $this->translation_titles),
+            'timing' => $this->when($this->resource->hasAttribute('timeline_assessment'), fn (): array => $this->timeline_assessment['timing']),
+            'readiness' => $this->when($this->resource->hasAttribute('timeline_assessment'), fn (): array => $this->timeline_assessment['readiness']),
             'publication_warnings' => $this->when($this->resource->hasAttribute('potential_overlap_ids'), fn (): array => $this->potential_overlap_ids === [] ? [] : [[
                 'code' => 'potential_overlap',
                 'template_ids' => $this->potential_overlap_ids,

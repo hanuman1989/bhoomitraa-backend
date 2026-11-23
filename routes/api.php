@@ -10,6 +10,7 @@ use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Admin\AuthController as AdminAuthController;
 use App\Http\Controllers\Admin\CategoryController;
 use App\Http\Controllers\Admin\CropActivityTemplateController;
+use App\Http\Controllers\Admin\CropActivityTemplateTimelineBuilderController;
 use App\Http\Controllers\Admin\CropCategoryController;
 use App\Http\Controllers\Admin\CropController;
 use App\Http\Controllers\Admin\CropSeedRateController;
@@ -100,6 +101,14 @@ Route::prefix('admin')->name('admin.')->group(function (): void {
             Route::patch('crop-yield-benchmarks/{cropYieldBenchmark}/status', [CropYieldBenchmarkController::class, 'updateStatus'])->name('crop-yield-benchmarks.status');
             Route::post('farmer-smart-timeline/preview', FarmerSmartTimelinePreviewController::class)
                 ->name('farmer-smart-timeline.preview');
+            Route::prefix('crop-activity-templates')->name('crop-activity-templates.')->group(function (): void {
+                Route::get('timeline-builder/metadata', [CropActivityTemplateTimelineBuilderController::class, 'metadata'])
+                    ->name('timeline-builder.metadata');
+                Route::post('timeline-builder/resolve', [CropActivityTemplateTimelineBuilderController::class, 'resolve'])
+                    ->name('timeline-builder.resolve');
+                Route::post('bulk', [CropActivityTemplateTimelineBuilderController::class, 'bulk'])->name('bulk');
+                Route::post('import', [CropActivityTemplateTimelineBuilderController::class, 'import'])->name('import');
+            });
             Route::apiResource('crop-activity-templates', CropActivityTemplateController::class)
                 ->parameters(['crop-activity-templates' => 'cropActivityTemplate']);
             Route::patch('crop-activity-templates/{cropActivityTemplate}/status', [CropActivityTemplateController::class, 'updateStatus'])

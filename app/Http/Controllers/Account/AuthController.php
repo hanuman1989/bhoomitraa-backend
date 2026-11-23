@@ -26,7 +26,9 @@ class AuthController extends Controller
                     return null;
                 }
 
-                $expiresAt = now()->addMinutes(config('sanctum.expiration'));
+                $expiresAt = now()->startOfSecond()->addMinutes(filter_var($credentials['remember'] ?? false, FILTER_VALIDATE_BOOLEAN)
+                    ? config('sanctum.remember_token_expiration')
+                    : config('sanctum.token_expiration'));
                 $token = $user->createToken($credentials['device_name'] ?? 'frontend-api', ['frontend'], $expiresAt);
                 $user->last_login_at = now()->startOfSecond();
                 $user->save();

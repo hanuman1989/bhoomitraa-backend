@@ -63,7 +63,7 @@ test('failed logout returns 500 and retains the current token', function (string
 ]);
 
 test('login issues a scoped bearer token and hides sensitive account fields', function (string $model, string $prefix, string $accountKey, string $ability) {
-    $this->freezeTime();
+    $this->freezeSecond();
     $account = $model::factory()->create();
 
     $response = $this->postJson($prefix.'/login', [
@@ -245,11 +245,58 @@ test('tokens older than the configured lifetime receive 401', function () {
     $this->freezeTime();
     $user = User::factory()->create();
     $token = $user->createToken('test', ['frontend']);
-    $token->accessToken->forceFill(['created_at' => now()->subDay()->subMinute()])->save();
+    $token->accessToken->forceFill(['created_at' => now()->subMinutes(config('sanctum.expiration') + 1)])->save();
 
     $response = $this->withToken($token->plainTextToken)->getJson('/api/account/me');
 
     $response->assertUnauthorized();
+});
+
+test('admin login without remember issues a 24 hour token', function () {
+    $this->freezeSecond();
+    $adminUser = AdminUser::factory()->create();
+
+    $response = $this->postJson('/api/admin/login', [
+        'email' => $adminUser->email, 'password' => 'password', 'remember' => false,
+    ]);
+
+    $response->assertOk()->assertJsonPath('data.expires_at', now()->addDay()->toISOString());
+    $token = PersonalAccessToken::findToken($response->json('data.access_token'));
+    expect($token->expires_at->toISOString())->toBe(now()->addDay()->toISOString());
+
+    $this->travel(1)->day();
+    $this->travel(1)->minute();
+    $this->withToken($response->json('data.access_token'))->getJson('/api/admin/me')->assertUnauthorized();
+});
+
+test('admin login with remember issues a 30 day token that outlives 24 hours', function () {
+    $this->freezeSecond();
+    $adminUser = AdminUser::factory()->create();
+
+    $response = $this->postJson('/api/admin/login', [
+        'email' => $adminUser->email, 'password' => 'password', 'remember' => true,
+    ]);
+
+    $response->assertOk()->assertJsonPath('data.expires_at', now()->addDays(30)->toISOString());
+    $plainToken = $response->json('data.access_token');
+    $token = PersonalAccessToken::findToken($plainToken);
+    expect($token->expires_at->toISOString())->toBe(now()->addDays(30)->toISOString());
+
+    $this->travel(29)->days();
+    $this->withToken($plainToken)->getJson('/api/admin/me')->assertOk();
+    app('auth')->forgetGuards();
+
+    $this->travel(1)->day();
+    $this->travel(1)->minute();
+    $this->withToken($plainToken)->getJson('/api/admin/me')->assertUnauthorized();
+});
+
+test('admin login rejects a non boolean remember value', function () {
+    $adminUser = AdminUser::factory()->create();
+
+    $this->postJson('/api/admin/login', [
+        'email' => $adminUser->email, 'password' => 'password', 'remember' => 'forever',
+    ])->assertUnprocessable()->assertJsonValidationErrors('remember');
 });
 
 test('revoked tokens receive 401', function () {

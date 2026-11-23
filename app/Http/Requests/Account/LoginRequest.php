@@ -31,6 +31,7 @@ class LoginRequest extends FormRequest
             }],
             'password' => ['required', 'string', 'max:255'],
             'device_name' => ['sometimes', 'required', 'string', 'max:255'],
+            'remember' => ['sometimes', 'boolean'],
         ];
     }
 }

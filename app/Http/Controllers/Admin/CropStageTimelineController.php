@@ -8,6 +8,7 @@ use App\Http\Requests\Admin\UpdateCropStageTimelineRequest;
 use App\Http\Requests\Admin\UpdateCropStageTimelineStatusRequest;
 use App\Http\Resources\Admin\CropStageTimelineResource;
 use App\Models\CropStageTimeline;
+use App\Services\CropActivityTemplateWriter;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -23,6 +24,8 @@ use PDOException;
 
 class CropStageTimelineController extends Controller
 {
+    public function __construct(private CropActivityTemplateWriter $templateWriter) {}
+
     public function index(Request $request): JsonResponse
     {
         $filters = $request->validate([
@@ -192,7 +195,11 @@ class CropStageTimelineController extends Controller
                         return $this->overlapConflict($overlap->id);
                     }
                 }
+                $statusChanged = $timeline->isDirty('is_active');
                 $timeline->save();
+                if ($statusChanged) {
+                    $this->templateWriter->requireReconfirmationForStages([$timeline->crop_stage_id]);
+                }
 
                 return $timeline->load($this->displayRelations(includeRegions: true));
             }, attempts: 3);
@@ -281,13 +288,24 @@ class CropStageTimelineController extends Controller
                 }
             }
             $syncRegions = ! $timeline->exists || array_key_exists('region_scope', $data) || array_key_exists('region_ids', $data);
+            $previousStageId = $timeline->getOriginal('crop_stage_id');
+            $timingChanged = $timeline->isDirty([
+                'crop_stage_id', 'days_after_sowing_min', 'days_after_sowing_max', 'variety_scope', 'season_scope', 'region_scope',
+            ]);
             $timeline->save();
+            $changes = [];
             if ($syncRegions) {
-                $timeline->regions()->sync($regionIds);
+                $changes[] = $timeline->regions()->sync($regionIds);
             }
-            $timeline->varieties()->sync($timeline->variety_scope === 'all' ? [] : $varietyIds);
-            $timeline->seasons()->sync($timeline->season_scope === 'all' ? [] : $seasonIds);
+            $changes[] = $timeline->varieties()->sync($timeline->variety_scope === 'all' ? [] : $varietyIds);
+            $changes[] = $timeline->seasons()->sync($timeline->season_scope === 'all' ? [] : $seasonIds);
             $timeline->knowledgeSources()->sync($knowledgeSourceIds);
+            foreach ($changes as $change) {
+                $timingChanged = $timingChanged || $change['attached'] !== [] || $change['detached'] !== [];
+            }
+            if ($timeline->is_active && $timingChanged) {
+                $this->templateWriter->requireReconfirmationForStages([(int) $previousStageId, $timeline->crop_stage_id]);
+            }
 
             return $timeline->load($this->displayRelations(includeRegions: true));
         }, attempts: 3);

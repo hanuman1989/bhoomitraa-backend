@@ -10,6 +10,43 @@ use Laravel\Sanctum\PersonalAccessToken;
 
 uses(LazilyRefreshDatabase::class);
 
+test('farmer login without remember issues a 24 hour token', function () {
+    $this->travelTo('2026-11-08 12:00:00');
+    $farmer = User::factory()->create(['mobile' => '9876543210']);
+
+    $response = $this->postJson('/api/account/login', ['login' => '9876543210', 'password' => 'password', 'remember' => false])
+        ->assertOk()->assertJsonPath('data.expires_at', '2026-11-09T12:00:00.000000Z');
+    $plainToken = $response->json('data.access_token');
+    expect(PersonalAccessToken::findToken($plainToken)->expires_at->toISOString())->toBe('2026-11-09T12:00:00.000000Z');
+
+    $this->travelTo('2026-11-09 12:00:01');
+    $this->withToken($plainToken)->getJson('/api/account/me')->assertUnauthorized();
+});
+
+test('farmer login with remember issues a 30 day token that outlives 24 hours', function () {
+    $this->travelTo('2026-11-08 12:00:00');
+    $farmer = User::factory()->create(['mobile' => '9876543210']);
+
+    $response = $this->postJson('/api/account/login', ['login' => '9876543210', 'password' => 'password', 'remember' => true])
+        ->assertOk()->assertJsonPath('data.expires_at', '2026-12-08T12:00:00.000000Z');
+    $plainToken = $response->json('data.access_token');
+    expect(PersonalAccessToken::findToken($plainToken)->expires_at->toISOString())->toBe('2026-12-08T12:00:00.000000Z');
+
+    $this->travelTo('2026-12-07 12:00:00');
+    $this->withToken($plainToken)->getJson('/api/account/me')->assertOk()->assertJsonPath('data.id', $farmer->id);
+    app('auth')->forgetGuards();
+
+    $this->travelTo('2026-12-08 12:00:01');
+    $this->withToken($plainToken)->getJson('/api/account/me')->assertUnauthorized();
+});
+
+test('farmer login rejects a non boolean remember value', function () {
+    User::factory()->create(['mobile' => '9876543210']);
+
+    $this->postJson('/api/account/login', ['login' => '9876543210', 'password' => 'password', 'remember' => 'forever'])
+        ->assertUnprocessable()->assertJsonValidationErrors('remember');
+});
+
 test('active farmers log in with email or Indian mobile and receive the same scoped expiring bearer token', function (string $login, string $mobile, ?string $email) {
     $this->travelTo('2026-11-08 12:00:00');
     $farmer = User::factory()->create(['first_name' => 'Hanuman', 'last_name' => 'Sharma', 'mobile' => $mobile, 'email' => $email]);

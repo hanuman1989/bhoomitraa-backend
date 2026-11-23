@@ -31,7 +31,9 @@ class AuthController extends Controller
             ], 401);
         }
 
-        $expiresAt = now()->addMinutes(config('sanctum.expiration'));
+        $expiresAt = now()->startOfSecond()->addMinutes($request->boolean('remember')
+            ? config('sanctum.remember_token_expiration')
+            : config('sanctum.token_expiration'));
         try {
             $token = $adminUser->createToken($credentials['device_name'] ?? 'admin-api', ['admin'], $expiresAt);
         } catch (QueryException|PDOException $exception) {

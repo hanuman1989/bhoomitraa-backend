@@ -26,6 +26,7 @@ class UpdateCropActivityTemplateStatusRequest extends FormRequest
     {
         return [
             'is_active' => ['required', 'boolean'],
+            'expected_version' => ['sometimes', 'integer', 'min:1'],
         ];
     }
 
@@ -33,7 +34,7 @@ class UpdateCropActivityTemplateStatusRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
-            foreach (array_diff(array_keys($this->all()), ['is_active', '_method']) as $field) {
+            foreach (array_diff(array_keys($this->all()), ['is_active', 'expected_version', '_method']) as $field) {
                 $validator->errors()->add($field, 'The '.$field.' field is not allowed.');
             }
             if ($validator->errors()->isNotEmpty() || ! $this->boolean('is_active')) {
