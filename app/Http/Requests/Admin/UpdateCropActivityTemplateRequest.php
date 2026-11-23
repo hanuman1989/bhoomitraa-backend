@@ -30,7 +30,7 @@ class UpdateCropActivityTemplateRequest extends StoreCropActivityTemplateRequest
             'season_ids', 'schedule_type', 'schedule_basis', 'start_offset_days', 'end_offset_days',
             'activity_type', 'allow_status_update', 'allow_expenses', 'allow_labour', 'allow_notes',
             'allow_attachments', 'allow_rescheduling', 'smart_actions', 'knowledge_source_ids',
-            'region_scope', 'region_ids', 'priority', 'translations',
+            'region_scope', 'region_ids', 'priority', 'translations', 'display_order', 'timing_exception_reason',
         ] as $field) {
             if (! isset($rules[$field])) {
                 continue;
@@ -42,7 +42,15 @@ class UpdateCropActivityTemplateRequest extends StoreCropActivityTemplateRequest
             array_unshift($rules['translations.'.$locale], 'sometimes');
             array_unshift($rules['translations.'.$locale.'.title'], 'sometimes');
         }
+        unset($rules['creation_request_id']);
+        $rules['expected_version'] = ['sometimes', 'integer', 'min:1'];
 
         return $rules;
+    }
+
+    /** @return list<string> */
+    protected function permittedFields(): array
+    {
+        return [...array_diff(parent::permittedFields(), ['creation_request_id']), 'expected_version'];
     }
 }

@@ -8,21 +8,26 @@ use App\Http\Requests\Admin\UpdateCropActivityTemplateRequest;
 use App\Http\Requests\Admin\UpdateCropActivityTemplateStatusRequest;
 use App\Http\Resources\Admin\CropActivityTemplateResource;
 use App\Models\CropActivityTemplate;
+use App\Models\CropActivityTemplateTranslation;
+use App\Services\CropActivityTemplateAssessor;
+use App\Services\CropActivityTemplateWriter;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
 use PDOException;
+use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class CropActivityTemplateController extends Controller
 {
+    public function __construct(
+        private CropActivityTemplateWriter $writer,
+        private CropActivityTemplateAssessor $assessor,
+    ) {}
+
     public function index(Request $request): JsonResponse
     {
         $filters = $request->validate([
@@ -42,11 +47,12 @@ class CropActivityTemplateController extends Controller
             'activity_type' => ['sometimes', Rule::in(CropActivityTemplate::ACTIVITY_TYPES)],
             'priority' => ['sometimes', Rule::in(CropActivityTemplate::PRIORITIES)],
             'status' => ['sometimes', 'boolean'],
+            'include_assessment' => ['sometimes', 'boolean'],
             'page' => ['sometimes', 'integer', 'min:1'],
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ]);
         try {
-            $query = CropActivityTemplate::query()->withLocalizedTitle()->with($this->displayRelations());
+            $query = CropActivityTemplate::query()->withLocalizedTitle()->with($this->writer->displayRelations());
             foreach (['crop_id', 'category_id', 'crop_stage_id', 'schedule_type', 'schedule_basis', 'activity_type', 'priority', 'variety_scope', 'season_scope', 'region_scope'] as $field) {
                 if (array_key_exists($field, $filters)) {
                     $query->where('crop_activity_templates.'.$field, $filters[$field]);
@@ -92,8 +98,14 @@ class CropActivityTemplateController extends Controller
                 ->appends($request->only([
                     'keyword', 'crop_id', 'crop_variety_id', 'category_id', 'crop_stage_id', 'season_id',
                     'source_id', 'region_id', 'variety_scope', 'season_scope', 'region_scope',
-                    'schedule_type', 'schedule_basis', 'activity_type', 'priority', 'status', 'per_page',
+                    'schedule_type', 'schedule_basis', 'activity_type', 'priority', 'status', 'include_assessment', 'per_page',
                 ]));
+            $this->attachListingDetails($templates->getCollection());
+            if ($request->boolean('include_assessment')) {
+                foreach ($templates->getCollection() as $template) {
+                    $this->withAssessment($template, $template->listed_region_ids);
+                }
+            }
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to retrieve crop activity templates. Please try again later.');
         }
@@ -114,26 +126,28 @@ class CropActivityTemplateController extends Controller
     public function store(StoreCropActivityTemplateRequest $request): JsonResponse
     {
         try {
-            $template = $this->saveTemplate(new CropActivityTemplate, $request->validated());
+            $result = $this->writer->create($request->validated());
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to create the crop activity template. Please try again later.');
         }
 
         return response()->json([
             'status' => true,
-            'data' => new CropActivityTemplateResource($template),
+            'data' => new CropActivityTemplateResource($this->withAssessment($result['template'])),
             'pagination' => null,
-            'message' => 'Crop activity template created successfully.',
-        ], 201);
+            'message' => $result['created']
+                ? 'Crop activity template created successfully.'
+                : 'Crop activity template was already created for this request.',
+        ], $result['created'] ? 201 : 200);
     }
 
     public function show(CropActivityTemplate $cropActivityTemplate): JsonResponse
     {
-        $cropActivityTemplate->load($this->displayRelations(includeEditData: true));
+        $cropActivityTemplate->load($this->writer->displayRelations(includeEditData: true));
 
         return response()->json([
             'status' => true,
-            'data' => new CropActivityTemplateResource($cropActivityTemplate),
+            'data' => new CropActivityTemplateResource($this->withAssessment($cropActivityTemplate)),
             'pagination' => null,
             'message' => 'Crop activity template retrieved successfully.',
         ]);
@@ -142,14 +156,16 @@ class CropActivityTemplateController extends Controller
     public function update(UpdateCropActivityTemplateRequest $request, CropActivityTemplate $cropActivityTemplate): JsonResponse
     {
         try {
-            $template = $this->saveTemplate($cropActivityTemplate, $request->validated());
+            $template = $this->writer->save($cropActivityTemplate, $request->validated());
+        } catch (ConflictHttpException $exception) {
+            return $this->conflict($exception->getMessage());
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to update the crop activity template. Please try again later.');
         }
 
         return response()->json([
             'status' => true,
-            'data' => new CropActivityTemplateResource($template),
+            'data' => new CropActivityTemplateResource($this->withAssessment($template)),
             'pagination' => null,
             'message' => 'Crop activity template updated successfully.',
         ]);
@@ -158,35 +174,20 @@ class CropActivityTemplateController extends Controller
     public function updateStatus(UpdateCropActivityTemplateStatusRequest $request, CropActivityTemplate $cropActivityTemplate): JsonResponse
     {
         try {
-            $template = DB::transaction(function () use ($request, $cropActivityTemplate): CropActivityTemplate {
-                $template = CropActivityTemplate::query()->lockForUpdate()->findOrFail($cropActivityTemplate->id);
-                $template->is_active = $request->boolean('is_active');
-                $regionIds = $template->resolveRegionIds([]);
-                if ($template->is_active) {
-                    Gate::authorize('review-knowledge-sources');
-                    $errors = $template->validationErrors(
-                        $regionIds,
-                        lockRelationships: true,
-                        varietyIds: $template->resolveVarietyIds([]),
-                        seasonIds: $template->resolveSeasonIds([]),
-                        knowledgeSourceIds: $template->resolveKnowledgeSourceIds([]),
-                    );
-                    if ($errors !== []) {
-                        throw ValidationException::withMessages($errors);
-                    }
-                }
-                $template->save();
-                $template->setAttribute('potential_overlap_ids', $template->is_active ? $template->potentialOverlapIds($regionIds) : []);
-
-                return $template->load($this->displayRelations(includeEditData: true));
-            }, attempts: 3);
+            $template = $this->writer->changeStatus(
+                $cropActivityTemplate,
+                $request->boolean('is_active'),
+                $request->has('expected_version') ? $request->integer('expected_version') : null,
+            );
+        } catch (ConflictHttpException $exception) {
+            return $this->conflict($exception->getMessage());
         } catch (QueryException|PDOException $exception) {
             return $this->databaseFailure($exception, 'Unable to update the crop activity template status. Please try again later.');
         }
 
         return response()->json([
             'status' => true,
-            'data' => new CropActivityTemplateResource($template),
+            'data' => new CropActivityTemplateResource($this->withAssessment($template)),
             'pagination' => null,
             'message' => 'Crop activity template status updated successfully.',
         ]);
@@ -195,16 +196,7 @@ class CropActivityTemplateController extends Controller
     public function destroy(CropActivityTemplate $cropActivityTemplate): JsonResponse
     {
         try {
-            $deleted = DB::transaction(function () use ($cropActivityTemplate): bool {
-                $template = CropActivityTemplate::query()->lockForUpdate()->findOrFail($cropActivityTemplate->id);
-                if ($template->is_active || $template->hasExternalReferences()) {
-                    return false;
-                }
-                $template->delete();
-
-                return true;
-            }, attempts: 3);
-            if (! $deleted) {
+            if (! $this->writer->delete($cropActivityTemplate)) {
                 return $this->deletionConflict();
             }
         } catch (QueryException $exception) {
@@ -226,81 +218,44 @@ class CropActivityTemplateController extends Controller
         ]);
     }
 
-    /** @param array<string, mixed> $data */
-    private function saveTemplate(CropActivityTemplate $template, array $data): CropActivityTemplate
+    /** @param list<int>|null $regionIds */
+    private function withAssessment(CropActivityTemplate $template, ?array $regionIds = null): CropActivityTemplate
     {
-        $templateId = $template->exists ? $template->id : null;
-
-        return DB::transaction(function () use ($templateId, $data): CropActivityTemplate {
-            $template = $templateId === null ? new CropActivityTemplate : CropActivityTemplate::query()->lockForUpdate()->findOrFail($templateId);
-            if ($template->is_active) {
-                Gate::authorize('review-knowledge-sources');
-            }
-            $regionIds = $template->resolveRegionIds($data);
-            $varietyIds = $template->resolveVarietyIds($data);
-            $seasonIds = $template->resolveSeasonIds($data);
-            $knowledgeSourceIds = $template->resolveKnowledgeSourceIds($data);
-            $template->fill(Arr::only($data, array_diff($template->getFillable(), ['is_active', 'trigger_type', 'trigger_config'])));
-            $template->trigger_type = 'scheduled';
-            $template->trigger_config = null;
-            if (! $template->exists) {
-                $template->is_active = false;
-            }
-            if (($data['schedule_basis'] ?? $template->schedule_basis) === 'growth_stage') {
-                $template->start_offset_days = null;
-                $template->end_offset_days = null;
-            }
-            $errors = $template->validationErrors(
-                $regionIds,
-                $data['translations'] ?? [],
-                lockRelationships: true,
-                varietyIds: $varietyIds,
-                seasonIds: $seasonIds,
-                knowledgeSourceIds: $knowledgeSourceIds,
-            );
-            if ($errors !== []) {
-                throw ValidationException::withMessages($errors);
-            }
-            $template->save();
-            foreach ($data['translations'] ?? [] as $locale => $translation) {
-                $template->translations()->updateOrCreate(['locale' => $locale], $translation);
-            }
-            if (array_key_exists('region_scope', $data) || array_key_exists('region_ids', $data) || ! $template->wasRecentlyCreated) {
-                $template->regions()->sync($template->region_scope === 'all' ? [] : $regionIds);
-            }
-            $template->varieties()->sync($template->variety_scope === 'all' ? [] : $varietyIds);
-            $template->seasons()->sync($template->season_scope === 'all' ? [] : $seasonIds);
-            $template->knowledgeSources()->sync($knowledgeSourceIds);
-            $template->setAttribute('potential_overlap_ids', $template->is_active ? $template->potentialOverlapIds($regionIds) : []);
-
-            return $template->load($this->displayRelations(includeEditData: true));
-        }, attempts: 3);
+        return $template->setAttribute('timeline_assessment', $this->assessor->assess($template, $regionIds));
     }
 
-    /** @return array<int|string, mixed> */
-    private function displayRelations(bool $includeEditData = false): array
+    /**
+     * Attach every translated title and district selection to listed templates in two queries.
+     *
+     * @param  Collection<int, CropActivityTemplate>  $templates
+     */
+    private function attachListingDetails(Collection $templates): void
     {
-        $locales = array_unique([app()->getLocale(), config('languages.default')]);
-        $names = static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
-            ->select(['id', $translations->getForeignKeyName(), 'locale', 'name']);
-        $relations = [
-            'crop:id,crop_color', 'crop.translations' => $names,
-            'category:id', 'category.translations' => $names,
-            'cropStage:id', 'cropStage.translations' => $names,
-            'varieties:id', 'varieties.translations' => $names,
-            'seasons:id,slug,start_month,end_month,icon', 'seasons.translations' => $names,
-            'knowledgeSources:id,title,publisher,source_type,source_url,language,reference_identifier,is_active,verification_status',
-            'knowledgeSources.translations' => static fn (HasMany $translations): HasMany => $translations->whereIn('locale', $locales)
-                ->select(['id', 'knowledge_source_id', 'locale', 'title']),
-        ];
-        if ($includeEditData) {
-            $relations[] = 'translations';
-            $relations['regions'] = static fn (BelongsToMany $regions): BelongsToMany => $regions
-                ->select(['regions.id', 'regions.parent_id', 'regions.region_type'])->orderBy('regions.id');
-            $relations['regions.translations'] = $names;
+        $ids = $templates->modelKeys();
+        if ($ids === []) {
+            return;
         }
+        $titles = CropActivityTemplateTranslation::query()->whereIn('crop_activity_template_id', $ids)
+            ->whereIn('locale', array_keys(config('languages.supported')))->orderBy('locale')
+            ->get(['crop_activity_template_id', 'locale', 'title'])->groupBy('crop_activity_template_id');
+        $regions = DB::table('crop_activity_template_regions')->whereIn('crop_activity_template_id', $ids)
+            ->orderBy('region_id')->get(['crop_activity_template_id', 'region_id'])->groupBy('crop_activity_template_id');
+        foreach ($templates as $template) {
+            $template->setAttribute('translation_titles', $titles->get($template->id, collect())
+                ->mapWithKeys(fn (CropActivityTemplateTranslation $translation): array => [$translation->locale => $translation->title])->all());
+            $template->setAttribute('listed_region_ids', $template->region_scope === 'all' ? [] : $regions->get($template->id, collect())
+                ->map(fn (object $row): int => (int) $row->region_id)->values()->all());
+        }
+    }
 
-        return $relations;
+    private function conflict(string $message): JsonResponse
+    {
+        return response()->json([
+            'status' => false,
+            'data' => null,
+            'pagination' => null,
+            'message' => $message,
+        ], 409);
     }
 
     private function deletionConflict(): JsonResponse

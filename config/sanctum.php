@@ -50,7 +50,18 @@ return [
     |
     */
 
-    'expiration' => 1440,
+    // Absolute cap for every token (checked against created_at). It must be
+    // at least the longest per-token lifetime below, otherwise "remember me"
+    // tokens would be cut off early. Login controllers set each token's
+    // expires_at from token_expiration / remember_token_expiration, and the
+    // frontend cookie expires at that same expires_at.
+    'expiration' => (int) env('SANCTUM_REMEMBER_TOKEN_EXPIRATION', 43200),
+
+    // Lifetime (minutes) of a normal login token: 24 hours.
+    'token_expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION', 1440),
+
+    // Lifetime (minutes) of a "remember me" login token: 30 days.
+    'remember_token_expiration' => (int) env('SANCTUM_REMEMBER_TOKEN_EXPIRATION', 43200),
 
     'routes' => false,
 

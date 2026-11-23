@@ -3,8 +3,8 @@
 namespace App\Http\Requests\Admin;
 
 use App\Models\CropActivityTemplate;
+use App\Services\CropActivityTemplateWriter;
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Arr;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
@@ -35,7 +35,7 @@ class StoreCropActivityTemplateRequest extends FormRequest
             'season_scope' => ['required', 'string', Rule::in(CropActivityTemplate::SEASON_SCOPES)],
             'season_ids' => ['sometimes', 'array', 'list'],
             'season_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
-            'schedule_type' => ['required', 'string', Rule::in(CropActivityTemplate::SCHEDULE_TYPES)],
+            'schedule_type' => ['required_unless:schedule_basis,'.CropActivityTemplate::PENDING_SCHEDULE_BASIS, 'nullable', 'string', Rule::in(CropActivityTemplate::SCHEDULE_TYPES)],
             'schedule_basis' => ['sometimes', 'string', Rule::in(CropActivityTemplate::SCHEDULE_BASES)],
             'start_offset_days' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:'.CropActivityTemplate::MAX_OFFSET_DAYS],
             'end_offset_days' => ['sometimes', 'nullable', 'integer', 'min:0', 'max:'.CropActivityTemplate::MAX_OFFSET_DAYS],
@@ -54,6 +54,9 @@ class StoreCropActivityTemplateRequest extends FormRequest
             'region_ids' => ['sometimes', 'array', 'list'],
             'region_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
             'priority' => ['sometimes', 'required', 'string', Rule::in(CropActivityTemplate::PRIORITIES)],
+            'display_order' => ['sometimes', 'integer', 'min:0', 'max:'.CropActivityTemplate::MAX_DISPLAY_ORDER],
+            'timing_exception_reason' => ['sometimes', 'nullable', 'string', 'max:'.CropActivityTemplate::MAX_TIMING_EXCEPTION_REASON_LENGTH],
+            'creation_request_id' => ['sometimes', 'nullable', 'string', 'max:100', 'regex:/^[A-Za-z0-9._:-]+$/D'],
             'translations' => ['required', 'array:'.implode(',', array_keys(config('languages.supported')))],
             'translations.*' => ['required', 'array:title,description,instructions'],
             'translations.*.title' => ['required', 'string', 'max:200'],
@@ -68,52 +71,42 @@ class StoreCropActivityTemplateRequest extends FormRequest
         return $rules;
     }
 
+    /**
+     * Top-level fields accepted by template create payloads (also used for imports).
+     *
+     * @return list<string>
+     */
+    public static function allowedFields(): array
+    {
+        return [
+            ...array_diff((new CropActivityTemplate)->getFillable(), ['is_active']),
+            'crop_variety_ids', 'season_ids', 'region_ids', 'knowledge_source_ids', 'translations',
+            'creation_request_id',
+        ];
+    }
+
+    /** @return list<string> */
+    protected function permittedFields(): array
+    {
+        return [...static::allowedFields(), '_method'];
+    }
+
     /** @return list<callable(Validator): void> */
     public function after(): array
     {
         return [function (Validator $validator): void {
-            $metadata = array_diff((new CropActivityTemplate)->getFillable(), ['is_active']);
-            foreach (array_diff(array_keys($this->all()), [
-                ...$metadata, 'crop_variety_ids', 'season_ids', 'region_ids', 'knowledge_source_ids', 'translations', '_method',
-            ]) as $field) {
+            foreach (array_diff(array_keys($this->all()), $this->permittedFields()) as $field) {
                 $validator->errors()->add($field, 'The '.$field.' field is not allowed.');
             }
             if ($validator->errors()->isNotEmpty()) {
                 return;
             }
             $existing = $this->route('cropActivityTemplate');
-            $template = $existing instanceof CropActivityTemplate ? clone $existing : new CropActivityTemplate;
-            $data = $validator->getData();
-            if (! $template->exists) {
-                $template->schedule_basis = $data['schedule_basis'] ?? 'fixed_offsets';
-                $template->activity_type = $data['activity_type'] ?? 'task';
-                $template->allow_status_update = $data['allow_status_update'] ?? true;
-                $template->allow_expenses = $data['allow_expenses'] ?? false;
-                $template->allow_labour = $data['allow_labour'] ?? false;
-                $template->allow_notes = $data['allow_notes'] ?? true;
-                $template->allow_attachments = $data['allow_attachments'] ?? false;
-                $template->allow_rescheduling = $data['allow_rescheduling'] ?? false;
-                $template->smart_actions = $data['smart_actions'] ?? [];
-                $template->trigger_type = 'scheduled';
-                $template->trigger_config = null;
-            }
-            $regionIds = $template->resolveRegionIds($data);
-            $varietyIds = $template->resolveVarietyIds($data);
-            $seasonIds = $template->resolveSeasonIds($data);
-            $knowledgeSourceIds = $template->resolveKnowledgeSourceIds($data);
-            $template->fill(Arr::only($data, $metadata));
-            if (($data['schedule_basis'] ?? $template->schedule_basis) === 'growth_stage') {
-                $template->start_offset_days = null;
-                $template->end_offset_days = null;
-            }
-            foreach ($template->validationErrors(
-                $regionIds,
-                $data['translations'] ?? [],
-                false,
-                $varietyIds,
-                $seasonIds,
-                $knowledgeSourceIds,
-            ) as $field => $messages) {
+            $errors = app(CropActivityTemplateWriter::class)->candidateErrors(
+                $existing instanceof CropActivityTemplate ? $existing : null,
+                $validator->getData(),
+            );
+            foreach ($errors as $field => $messages) {
                 foreach ($messages as $message) {
                     $validator->errors()->add($field, $message);
                 }

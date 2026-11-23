@@ -31,7 +31,14 @@ class CropActivityTemplate extends Model
 
     public const SEASON_SCOPES = ['all', 'specific'];
 
-    public const SCHEDULE_BASES = ['fixed_offsets', 'growth_stage'];
+    /** "pending" is an inactive draft whose scheduling is configured later. */
+    public const SCHEDULE_BASES = ['fixed_offsets', 'growth_stage', 'pending'];
+
+    public const PENDING_SCHEDULE_BASIS = 'pending';
+
+    public const MAX_DISPLAY_ORDER = 4294967295;
+
+    public const MAX_TIMING_EXCEPTION_REASON_LENGTH = 2000;
 
     public const ACTIVITY_TYPES = ['information', 'observation', 'task'];
 
@@ -49,7 +56,7 @@ class CropActivityTemplate extends Model
         'schedule_type', 'schedule_basis', 'start_offset_days', 'end_offset_days', 'activity_type',
         'allow_status_update', 'allow_expenses', 'allow_labour', 'allow_notes',
         'allow_attachments', 'allow_rescheduling', 'smart_actions', 'trigger_type', 'trigger_config',
-        'priority', 'is_active',
+        'priority', 'is_active', 'timing_exception_reason', 'display_order',
     ];
 
     /** @var array<string, mixed> */
@@ -59,6 +66,7 @@ class CropActivityTemplate extends Model
         'allow_labour' => false, 'allow_notes' => true, 'allow_attachments' => false,
         'allow_rescheduling' => false, 'trigger_type' => 'scheduled',
         'priority' => 'medium', 'is_active' => false,
+        'scheduling_reconfirmation_required' => false, 'display_order' => 0, 'version' => 1,
     ];
 
     protected $dateFormat = 'Y-m-d H:i:s.u';
@@ -72,6 +80,7 @@ class CropActivityTemplate extends Model
             'allow_status_update' => 'boolean', 'allow_expenses' => 'boolean', 'allow_labour' => 'boolean',
             'allow_notes' => 'boolean', 'allow_attachments' => 'boolean', 'allow_rescheduling' => 'boolean',
             'smart_actions' => 'array', 'trigger_config' => 'array', 'is_active' => 'boolean',
+            'scheduling_reconfirmation_required' => 'boolean', 'display_order' => 'integer', 'version' => 'integer',
         ];
     }
 
@@ -219,11 +228,18 @@ class CropActivityTemplate extends Model
         if ($this->exists && $this->isDirty('crop_id')) {
             $errors['crop_id'] = ['The parent crop cannot be changed after creation.'];
         }
-        if (! in_array($this->schedule_type, self::SCHEDULE_TYPES, true)) {
+        $isPending = $this->schedule_basis === self::PENDING_SCHEDULE_BASIS;
+        if (! $isPending && ! in_array($this->schedule_type, self::SCHEDULE_TYPES, true)) {
             $errors['schedule_type'] = ['Select a supported activity schedule.'];
         }
         if (! in_array($this->schedule_basis, self::SCHEDULE_BASES, true)) {
             $errors['schedule_basis'] = ['Select a supported schedule basis.'];
+        } elseif ($isPending) {
+            if ($this->is_active) {
+                $errors['schedule_basis'] = ['Configure scheduling before activating this template.'];
+            } elseif ($this->schedule_type !== null || $this->start_offset_days !== null || $this->end_offset_days !== null) {
+                $errors['schedule_basis'] = ['Pending drafts cannot store a schedule type or offsets.'];
+            }
         } elseif ($this->schedule_basis === 'fixed_offsets') {
             foreach (['start_offset_days', 'end_offset_days'] as $field) {
                 if ($this->{$field} === null || $this->{$field} < 0 || $this->{$field} > self::MAX_OFFSET_DAYS) {
@@ -431,6 +447,13 @@ class CropActivityTemplate extends Model
     /**
      * Potential intersections are advisory: no template precedence policy is defined yet.
      *
+     * Fixed-offset templates intersect by day window (same stage or stage-less).
+     * Growth-stage templates have no offsets of their own, so they intersect
+     * with every active template in the same stage; a fixed-offset template
+     * also reports growth-stage templates of its stage. Stage-less templates
+     * are not compared with growth-stage ones because stage day windows vary
+     * by region timeline.
+     *
      * @param  list<int>  $regionIds
      * @return list<int>
      */
@@ -439,10 +462,23 @@ class CropActivityTemplate extends Model
         $query = self::query()->where('is_active', true)->where('crop_id', $this->crop_id)
             ->where('category_id', $this->category_id)
             ->where('schedule_type', $this->schedule_type)
-            ->where('start_offset_days', '<=', $this->end_offset_days)->where('end_offset_days', '>=', $this->start_offset_days)
             ->when($this->exists, fn (Builder $query): Builder => $query->whereKeyNot($this->id));
-        if ($this->crop_stage_id !== null) {
-            $query->where(fn (Builder $query): Builder => $query->whereNull('crop_stage_id')->orWhere('crop_stage_id', $this->crop_stage_id));
+        $stageId = $this->crop_stage_id;
+        if ($this->start_offset_days === null || $this->end_offset_days === null) {
+            if ($stageId === null) {
+                return [];
+            }
+            $query->where('crop_stage_id', $stageId);
+        } else {
+            $query->where(fn (Builder $query): Builder => $query
+                ->where(fn (Builder $window): Builder => $window
+                    ->where('start_offset_days', '<=', $this->end_offset_days)
+                    ->where('end_offset_days', '>=', $this->start_offset_days)
+                    ->when($stageId !== null, fn (Builder $window): Builder => $window
+                        ->where(fn (Builder $stage): Builder => $stage->whereNull('crop_stage_id')->orWhere('crop_stage_id', $stageId))))
+                ->when($stageId !== null, fn (Builder $query): Builder => $query
+                    ->orWhere(fn (Builder $stage): Builder => $stage
+                        ->where('schedule_basis', 'growth_stage')->where('crop_stage_id', $stageId))));
         }
         if ($this->region_scope === 'specific') {
             $query->where(fn (Builder $query): Builder => $query->where('region_scope', 'all')
