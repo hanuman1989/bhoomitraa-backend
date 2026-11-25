@@ -16,6 +16,7 @@ use App\Models\Season;
 use App\Models\Seed;
 use App\Models\SoilTest;
 use App\Models\User;
+use App\Services\CropTimeline\FarmCropTimelineGenerator;
 use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Closure;
@@ -134,8 +135,9 @@ class FarmCropController extends Controller
     {
         $input = $request->validate($this->selectionRules() + ['revision' => ['required', 'integer', 'min:1']]);
         $cycle = $this->mutate($request, $id, function (FarmCropCycle $cycle, array &$state) use ($input, $request): void {
-            $farm = $request->user('user')->farms()->forApi(true)->findOrFail($input['farm_id']);
             $selection = $this->selection($input);
+            $this->assertLockedSelection($cycle, $selection);
+            $farm = $request->user('user')->farms()->forApi(true)->findOrFail($input['farm_id']);
             $this->validateSelection($selection, $farm);
             $farmChanged = (int) $cycle->farm_id !== $selection['farm_id'];
             $cycle->fill($selection);
@@ -240,6 +242,11 @@ class FarmCropController extends Controller
             if ($live->editDraft !== null) {
                 abort_unless($live->editDraft->base_revision === $live->revision, 409, 'The active crop changed after this edit began.');
             }
+            $sowingShift = 0;
+            if ($live->status === 'active') {
+                $this->assertLockedSelection($live, $cycle->only(['farm_id', 'crop_id', 'crop_variety_id', 'season_id']));
+                $sowingShift = (int) round($live->sowing_date->diffInDays($cycle->sowing_date, false));
+            }
             $state = $this->state($cycle);
             $issues = $this->validationIssues($cycle, $state, false);
             if ($issues !== []) {
@@ -249,8 +256,12 @@ class FarmCropController extends Controller
             $this->validateAllocation($cycle->farm, $state['boundary'], $cycle->cultivated_area, $cycle->area_unit, $cycle->id);
             if ($live->status === 'active') {
                 $history = $state['planning_snapshot']['history'] ?? [];
-                $history[] = Arr::except($live->planning_snapshot ?? [], ['history']);
+                $history[] = Arr::except($live->planning_snapshot ?? [], ['history', 'timeline']);
                 $state['planning_snapshot']['history'] = $history;
+                // The generated timeline belongs to the live crop, not to the edit draft.
+                if (isset($live->planning_snapshot['timeline'])) {
+                    $state['planning_snapshot']['timeline'] = $live->planning_snapshot['timeline'];
+                }
             }
             // The wizard no longer plans seed, soil, fertilizer or yield, so it creates no records in those tables.
             $maturity = $this->harvestEstimate($cycle);
@@ -267,6 +278,8 @@ class FarmCropController extends Controller
             $cycle->completed_step = count(FarmCropCycle::STEPS);
             $this->persistState($live, $cycle, $state);
             $live->editDraft()->delete();
+            // Editing an active crop never regenerates its timeline; a sowing-date change only moves its dates.
+            app(FarmCropTimelineGenerator::class)->shiftForSowingChange($live, $sowingShift);
         }, attempts: 3);
 
         return response()->json(['status' => true, 'data' => new FarmCropResource($this->detail($this->ownedCycle($request, $id))),
@@ -277,8 +290,9 @@ class FarmCropController extends Controller
     {
         $files = DB::transaction(function () use ($request, $id): array {
             $cycle = $this->lockCycle($request, $id);
-            if ($cycle->status !== 'draft') {
-                abort_unless($cycle->status === 'active', 409, 'Historical crops cannot be deleted.');
+            // Completed crops stay as history. Active crops are cancelled; drafts and cancelled crops are deleted.
+            abort_if($cycle->status === 'completed', 409, 'Historical crops cannot be deleted.');
+            if ($cycle->status === 'active') {
                 $pendingReport = $cycle->editDraft?->draft_data['soil_test']['report_file'] ?? null;
                 $pendingOnly = $pendingReport !== null && ! $cycle->soilTests()->where('report_file', $pendingReport)->exists();
                 $cycle->forceFill(['status' => 'cancelled', 'completion_reason' => 'farmer_cancelled', 'completed_at' => now(), 'revision' => $cycle->revision + 1])->save();
@@ -288,6 +302,8 @@ class FarmCropController extends Controller
             }
             $files = $cycle->soilTests()->whereNotNull('report_file')->pluck('report_file')->all();
             $cycle->soilTests()->delete();
+            // Timeline activities and their notes, soil assessments, fertilizer plans, yield estimates
+            // and edit drafts are removed by their cascading foreign keys.
             $cycle->delete();
 
             return $files;
@@ -497,6 +513,28 @@ class FarmCropController extends Controller
             'crop_variety_id' => ['nullable', 'integer', 'min:1'], 'season_id' => ['required', 'integer', 'min:1'],
             'sowing_date' => ['required', 'date_format:Y-m-d'],
             ...array_fill_keys($legacy, ['prohibited'])];
+    }
+
+    /**
+     * A saved (active) crop keeps its farm, crop, variety and season; only the sowing date can change.
+     *
+     * @param  array<string, mixed>  $selection
+     */
+    private function assertLockedSelection(FarmCropCycle $cycle, array $selection): void
+    {
+        if ($cycle->status !== 'active') {
+            return;
+        }
+        $errors = [];
+        foreach (['farm_id', 'crop_id', 'crop_variety_id', 'season_id'] as $field) {
+            $saved = $cycle->getOriginal($field) ?? $cycle->{$field};
+            if (($saved === null ? null : (int) $saved) !== ($selection[$field] === null ? null : (int) $selection[$field])) {
+                $errors[$field] = ['This cannot be changed after the crop is saved. Only the sowing date can be updated.'];
+            }
+        }
+        if ($errors !== []) {
+            throw ValidationException::withMessages($errors);
+        }
     }
 
     /** @return array{farm_id: int, crop_id: int, crop_variety_id: ?int, season_id: int, sowing_date: string} */
@@ -739,7 +777,7 @@ class FarmCropController extends Controller
             'applicable_regions' => $context['applicable_regions'], 'regional_context_available' => $context['regional_context_available'],
             'boundary_details' => $boundary, 'maturity' => $maturity,
             'validation_issues' => (object) $issues, 'can_finalize' => ! $historical && $issues === [],
-            'has_pending_edit' => $cycle->editDraft !== null, 'timeline_generated' => false,
+            'has_pending_edit' => $cycle->editDraft !== null, 'timeline_generated' => $cycle->timeline_generated_at !== null,
             'estimates_are_historical' => $historical, 'accepted_regional_context' => $historical ? ($state['planning_snapshot']['region_context'] ?? null) : null,
             'saved_step_data' => ['crop_selection' => [...$cycle->only(['farm_id', 'crop_id', 'crop_variety_id', 'season_id']),
                 'sowing_date' => $cycle->sowing_date?->toDateString()], 'boundary' => $boundary],

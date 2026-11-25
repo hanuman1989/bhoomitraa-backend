@@ -2,7 +2,9 @@
 
 use App\Http\Controllers\Account\AuthController as AccountAuthController;
 use App\Http\Controllers\Account\FarmController as AccountFarmController;
+use App\Http\Controllers\Account\FarmCropActivityController;
 use App\Http\Controllers\Account\FarmCropController;
+use App\Http\Controllers\Account\FarmCropTimelineController;
 use App\Http\Controllers\Account\FertilizerPriceController;
 use App\Http\Controllers\Account\UserController as AccountUserController;
 use App\Http\Controllers\Admin\ActivityCategoryController;
@@ -190,6 +192,17 @@ Route::prefix('account')->name('account.')->group(function (): void {
             Route::delete('{id}/edit-draft', 'discardEdit')->whereNumber('id')->name('discard-edit');
             Route::get('{id}/soil-report', 'currentSoilReport')->whereNumber('id')->name('current-soil-report');
             Route::get('{id}/soil-tests/{soilTest}/report', 'soilReport')->whereNumber(['id', 'soilTest'])->name('soil-report');
+        });
+        Route::prefix('farm-crops/{id}/timeline')->name('farm-crops.timeline.')->controller(FarmCropTimelineController::class)->group(function (): void {
+            Route::get('/', 'show')->whereNumber('id')->name('show');
+            Route::post('generate', 'generate')->whereNumber('id')->name('generate');
+            Route::post('alert-seen', 'alertSeen')->whereNumber('id')->name('alert-seen');
+        });
+        Route::controller(FarmCropActivityController::class)->group(function (): void {
+            Route::patch('crop-activities/{activity}/status', 'updateStatus')->whereNumber('activity')->name('crop-activities.status');
+            Route::patch('crop-activities/{activity}/schedule', 'reschedule')->whereNumber('activity')->name('crop-activities.schedule');
+            Route::post('crop-activities/{activity}/notes', 'storeNote')->whereNumber('activity')->name('crop-activities.notes.store');
+            Route::delete('crop-activity-notes/{note}', 'destroyNote')->whereNumber('note')->name('crop-activity-notes.destroy');
         });
         Route::get('area-units', [AccountUserController::class, 'areaUnits'])->name('area-units');
         Route::get('farms/summary', [AccountFarmController::class, 'summary'])->name('farms.summary');
