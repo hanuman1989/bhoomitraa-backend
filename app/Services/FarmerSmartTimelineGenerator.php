@@ -25,11 +25,17 @@ class FarmerSmartTimelineGenerator
      * Calendar dates use a fixed timezone solely for arithmetic, with no timezone conversion.
      * No models are saved and no farmer records are created.
      *
-     * @param  array{crop_id: int, crop_variety_id?: int|null, season_id: int, sowing_date: string, district_id: int}  $input
+     * The optional expected harvest date (Y-m-d) dates after-harvesting activities; the admin preview omits it,
+     * so those activities stay deferred there.
+     *
+     * @param  array{crop_id: int, crop_variety_id?: int|null, season_id: int, sowing_date: string, district_id: int, expected_harvest_date?: string|null}  $input
      * @return array<string, mixed>
      */
     public function generate(array $input): array
     {
+        $harvestDate = isset($input['expected_harvest_date'])
+            ? CarbonImmutable::createFromFormat('!Y-m-d', $input['expected_harvest_date'], 'UTC')
+            : null;
         $input = [
             'crop_id' => (int) $input['crop_id'], 'crop_variety_id' => isset($input['crop_variety_id']) ? (int) $input['crop_variety_id'] : null,
             'season_id' => (int) $input['season_id'], 'sowing_date' => $input['sowing_date'], 'district_id' => (int) $input['district_id'],
@@ -87,7 +93,7 @@ class FarmerSmartTimelineGenerator
         }
         $stageNames = $allStages->map(fn (CropStage $stage): ?string => $stage->translatedName())->all();
         $growthStages = $this->growthStages($input, $stages, $sowingDate, $maxOffset, $warnings, $sourceEligibility, $stageNames);
-        $activities = $this->activities($input, $stages, $sowingDate, $maxOffset, $warnings, $sourceEligibility);
+        $activities = $this->activities($input, $stages, $sowingDate, $maxOffset, $warnings, $sourceEligibility, $growthStages, $harvestDate);
         $this->activityOverlaps($activities, $warnings);
         $starts = [...array_column($growthStages, 'start_date'), ...array_column($activities, 'start_date')];
         $ends = [...array_column($growthStages, 'end_date'), ...array_column($activities, 'end_date')];
@@ -224,10 +230,12 @@ class FarmerSmartTimelineGenerator
      * @param  Collection<int, CropStage>  $stages
      * @param  array<string, array<string, mixed>>  $warnings
      * @param  array<int, string|null>  $sourceEligibility
+     * @param  list<array<string, mixed>>  $growthStages  Resolved stage windows used by growth-stage scheduled templates.
      * @return list<array<string, mixed>>
      */
-    private function activities(array $input, Collection $stages, CarbonImmutable $sowingDate, int $maxOffset, array &$warnings, array &$sourceEligibility): array
+    private function activities(array $input, Collection $stages, CarbonImmutable $sowingDate, int $maxOffset, array &$warnings, array &$sourceEligibility, array $growthStages = [], ?CarbonImmutable $harvestDate = null): array
     {
+        $stageWindows = collect($growthStages)->keyBy('crop_stage_id');
         $templates = $this->matching(CropActivityTemplate::query(), $input)->where('crop_id', $input['crop_id'])
             ->with([
                 ...$this->sourceRelations(), 'knowledgeSources:id,title,publisher,source_type,source_url,reference_identifier,language,is_active,verification_status',
@@ -246,12 +254,12 @@ class FarmerSmartTimelineGenerator
             $translation = $template->translation();
             $templateContext = ['template_id' => $template->id, 'template_title' => $translation?->title];
             if ($template->schedule_type !== 'after_sowing') {
-                if ($template->schedule_type === 'after_harvesting') {
+                if ($template->schedule_type === 'after_harvesting' && $harvestDate === null) {
                     $this->warning($warnings, 'HARVEST_DATE_NOT_AVAILABLE', 'A dated activity is deferred until the actual harvest date is recorded.', [...$templateContext, 'schedule_type' => $template->schedule_type]);
 
                     continue;
                 }
-                if ($template->schedule_type !== 'before_sowing') {
+                if (! in_array($template->schedule_type, ['before_sowing', 'after_harvesting'], true)) {
                     $this->warning($warnings, 'UNSUPPORTED_SCHEDULE_TYPE', 'A matching activity uses an unsupported scheduling type.', [...$templateContext, 'schedule_type' => $template->schedule_type]);
 
                     continue;
@@ -277,15 +285,29 @@ class FarmerSmartTimelineGenerator
 
                 continue;
             }
-            $range = $this->range($template, 'start_offset_days', 'end_offset_days', CropActivityTemplate::MAX_OFFSET_DAYS);
-            if ($range === null) {
-                $this->warning($warnings, 'INVALID_ACTIVITY_DAY_RANGE', 'A matching activity has an invalid stored day range.', $templateContext);
+            if ($template->schedule_basis === 'growth_stage') {
+                // Stage-based templates follow the resolved window of their growth stage; never guess one.
+                $stageWindow = $stageWindows->get($template->crop_stage_id);
+                if ($stageWindow === null) {
+                    $this->warning($warnings, 'STAGE_WINDOW_NOT_AVAILABLE', 'A growth-stage activity has no resolved stage window for these inputs.', $templateContext);
 
-                continue;
+                    continue;
+                }
+                $window = ['start_day' => $stageWindow['start_day'], 'end_day' => $stageWindow['end_day'],
+                    'start_date' => $stageWindow['start_date'], 'end_date' => $stageWindow['end_date']];
+            } else {
+                $range = $this->range($template, 'start_offset_days', 'end_offset_days', CropActivityTemplate::MAX_OFFSET_DAYS);
+                if ($range === null) {
+                    $this->warning($warnings, 'INVALID_ACTIVITY_DAY_RANGE', 'A matching activity has an invalid stored day range.', $templateContext);
+
+                    continue;
+                }
+                $window = match ($template->schedule_type) {
+                    'before_sowing' => $this->beforeWindow($sowingDate, $range, (int) CarbonImmutable::createFromFormat('!Y-m-d', '0001-01-01', 'UTC')->diffInDays($sowingDate), $warnings, $templateContext),
+                    'after_harvesting' => $this->window($harvestDate, $range, (int) $harvestDate->diffInDays(CarbonImmutable::createFromFormat('!Y-m-d', '9999-12-31', 'UTC')), $warnings, $templateContext),
+                    default => $this->window($sowingDate, $range, $maxOffset, $warnings, $templateContext),
+                };
             }
-            $window = $template->schedule_type === 'before_sowing'
-                ? $this->beforeWindow($sowingDate, $range, (int) CarbonImmutable::createFromFormat('!Y-m-d', '0001-01-01', 'UTC')->diffInDays($sowingDate), $warnings, $templateContext)
-                : $this->window($sowingDate, $range, $maxOffset, $warnings, $templateContext);
             if ($window === null) {
                 continue;
             }

@@ -25,6 +25,7 @@ class FarmCropResource extends JsonResource
             'cultivated_area' => $this->cultivated_area, 'area_unit' => $this->area_unit,
             'calculated_area_sqm' => $this->calculated_area_sqm,
             'boundary_source' => $this->boundary_source, 'latitude' => $this->latitude, 'longitude' => $this->longitude,
+            'has_timeline' => $this->timeline_generated_at !== null,
             'created_at' => $this->created_at?->toISOString(), 'updated_at' => $this->updated_at?->toISOString(),
             ...($this->detail_data ?? [])];
     }

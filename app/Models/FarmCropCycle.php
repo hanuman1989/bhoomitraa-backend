@@ -52,7 +52,13 @@ class FarmCropCycle extends Model
             'gps_accuracy_m' => 'decimal:2', 'wizard_progress' => 'array', 'planning_snapshot' => 'array', 'boundary_geojson' => 'array',
             'sowing_date' => 'immutable_date:Y-m-d', 'expected_harvest_date' => 'immutable_date:Y-m-d',
             'expected_harvest_date_min' => 'immutable_date:Y-m-d', 'expected_harvest_date_max' => 'immutable_date:Y-m-d',
-            'finalized_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime'];
+            'finalized_at' => 'immutable_datetime', 'completed_at' => 'immutable_datetime',
+            'timeline_generated_at' => 'immutable_datetime', 'timeline_alert_seen_at' => 'immutable_datetime'];
+    }
+
+    public function activities(): HasMany
+    {
+        return $this->hasMany(FarmCropActivity::class);
     }
 
     public function farm(): BelongsTo
