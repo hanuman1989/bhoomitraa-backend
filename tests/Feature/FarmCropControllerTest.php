@@ -2,14 +2,12 @@
 
 use App\Models\AdminUser;
 use App\Models\CropVariety;
+use App\Models\Farm;
 use App\Models\FarmCropCycle;
 use App\Models\User;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
-use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 require_once __DIR__.'/../FarmCropFixtures.php';
@@ -24,29 +22,86 @@ test('creates one retry-safe draft with server controlled progress and authorita
     $first = $this->withToken($token)->postJson('/api/account/farm-crops', $payload, ['Idempotency-Key' => $key])
         ->assertCreated()->assertJsonPath('data.status', 'draft')->assertJsonPath('data.revision', 1)
         ->assertJsonPath('data.completed_step', 1)->assertJsonPath('data.next_step', 2)
+        ->assertJsonPath('data.wizard_progress', ['crop_selection' => 'completed', 'boundary' => 'needs_review', 'review_save' => 'pending'])
+        ->assertJsonPath('data.sowing_date', '2026-11-01')->assertJsonMissingPath('data.sowing_method')
         ->assertJsonPath('data.regional_context.region_id', $context['district']->id)->assertJsonPath('data.boundary_details.boundary', null);
     $this->postJson('/api/account/farm-crops', $payload, ['Idempotency-Key' => $key])->assertCreated()->assertJsonPath('data.id', $first->json('data.id'));
-    $this->postJson('/api/account/farm-crops', [...$payload, 'sowing_method' => 'line_sowing'], ['Idempotency-Key' => $key])->assertConflict();
+    $this->postJson('/api/account/farm-crops', [...$payload, 'sowing_date' => '2026-11-02'], ['Idempotency-Key' => $key])->assertConflict();
 
     $this->assertDatabaseCount('farm_crop_cycles', 1);
     expect(array_keys($first->json()))->toBe(['status', 'data', 'pagination', 'message']);
 });
 
-test('resumes saved steps activates once and creates no jobs or notifications', function () {
+test('requires a valid sowing date and rejects every former seed soil fertilizer and sowing method input', function (array $input, string $field) {
+    $context = cropManagerContext();
+
+    $this->withToken($context['user']->createToken('crop', ['frontend'])->plainTextToken)
+        ->postJson('/api/account/farm-crops', [...cropManagerSelection($context), ...$input], ['Idempotency-Key' => (string) Str::uuid()])
+        ->assertUnprocessable()->assertJsonValidationErrors($field);
+
+    $this->assertDatabaseCount('farm_crop_cycles', 0);
+})->with([
+    'missing sowing date' => [['sowing_date' => null], 'sowing_date'],
+    'invalid sowing date' => [['sowing_date' => '01-11-2026'], 'sowing_date'],
+    'sowing method' => [['sowing_method' => 'broadcasting'], 'sowing_method'],
+    'seed product' => [['seed_id' => 1], 'seed_id'],
+    'seed quantity' => [['seed_quantity' => '25'], 'seed_quantity'],
+    'seed source' => [['seed_source' => 'farm_saved'], 'seed_source'],
+    'soil assessment' => [['assessment_mode' => 'skipped'], 'assessment_mode'],
+    'fertilizer plan' => [['fertilizers' => [['custom_name' => 'Urea', 'planned_quantity' => '10']]], 'fertilizers'],
+]);
+
+test('calculates the harvest range from the sowing date and verified variety maturity', function () {
+    $context = cropManagerContext();
+    $draft = cropManagerDraft($this, $context);
+
+    expect($draft['maturity'])->toBe(['maturity_status' => 'available', 'maturity_days_min' => 100, 'maturity_days_max' => 120,
+        'expected_harvest_date' => null, 'expected_harvest_date_min' => '2027-02-09', 'expected_harvest_date_max' => '2027-03-01']);
+    $saved = FarmCropCycle::findOrFail($draft['id']);
+    expect($saved->expected_harvest_date)->toBeNull();
+    expect($saved->expected_harvest_date_min->toDateString())->toBe('2027-02-09');
+    expect($saved->expected_harvest_date_max->toDateString())->toBe('2027-03-01');
+    expect($saved->planning_snapshot['maturity']['maturity_status'])->toBe('available');
+
+    $this->putJson('/api/account/farm-crops/'.$draft['id'].'/step-1', [...cropManagerSelection($context), 'sowing_date' => '2026-12-01', 'revision' => 1])
+        ->assertOk()->assertJsonPath('data.maturity.expected_harvest_date_min', '2027-03-11')->assertJsonPath('data.maturity.expected_harvest_date_max', '2027-03-31');
+});
+
+test('saves the crop without a maturity estimate when the variety range is unverified', function () {
+    $context = cropManagerContext();
+    $unverified = CropVariety::factory()->for($context['crop'])->withNames()->create(['is_active' => true, 'maturity_days_min' => 90, 'maturity_days_max' => 95]);
+    $draft = cropManagerDraft($this, $context);
+    $id = $draft['id'];
+
+    $this->putJson('/api/account/farm-crops/'.$id.'/step-1', [...cropManagerSelection($context), 'crop_variety_id' => $unverified->id, 'revision' => 1])
+        ->assertOk()->assertJsonPath('data.maturity.maturity_status', 'unavailable')->assertJsonPath('data.expected_harvest_date_min', null)
+        ->assertJsonPath('data.sowing_date', '2026-11-01');
+    $this->putJson('/api/account/farm-crops/'.$id.'/step-2', ['revision' => 2, 'boundary_source' => 'manual_area', 'cultivated_area' => '1', 'area_unit' => 'hectare'])
+        ->assertOk()->assertJsonPath('data.can_finalize', true);
+    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 3])->assertOk()->assertJsonPath('data.status', 'active')
+        ->assertJsonPath('data.maturity.maturity_status', 'unavailable');
+});
+
+test('activates after crop selection and boundary only and creates no seed soil fertilizer yield jobs or notifications', function () {
     $context = cropManagerContext();
     $ready = cropManagerReady($this, $context);
     Queue::fake();
     Notification::fake();
 
-    $this->getJson('/api/account/farm-crops/'.$ready['id'])->assertOk()->assertJsonPath('data.next_step', 6)
-        ->assertJsonPath('data.soil_assessment.assessment_mode', 'skipped')->assertJsonPath('data.can_finalize', true);
-    $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 5])->assertOk()
-        ->assertJsonPath('data.status', 'active')->assertJsonPath('data.completed_step', 6)->assertJsonPath('data.timeline_generated', false);
-    $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 5])->assertOk()->assertJsonPath('data.revision', 6);
+    $this->getJson('/api/account/farm-crops/'.$ready['id'])->assertOk()->assertJsonPath('data.next_step', 3)
+        ->assertJsonPath('data.can_finalize', true)->assertJsonPath('data.validation_issues', [])
+        ->assertJsonMissingPath('data.seed_sowing_details')->assertJsonMissingPath('data.soil_assessment')
+        ->assertJsonMissingPath('data.fertilizer_plan')->assertJsonMissingPath('data.expenses')->assertJsonMissingPath('data.expected_yield');
+    $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 2])->assertOk()
+        ->assertJsonPath('data.status', 'active')->assertJsonPath('data.completed_step', 3)->assertJsonPath('data.next_step', null)
+        ->assertJsonPath('data.wizard_progress.review_save', 'completed')->assertJsonPath('data.timeline_generated', false);
+    $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 2])->assertOk()->assertJsonPath('data.revision', 3);
 
-    $this->assertDatabaseCount('farm_crop_cycles', 1);
-    $this->assertDatabaseCount('farm_crop_yield_estimates', 0);
-    $this->assertDatabaseHas('farm_crop_cycles', ['id' => $ready['id'], 'status' => 'active', 'revision' => 6]);
+    $this->assertDatabaseHas('farm_crop_cycles', ['id' => $ready['id'], 'status' => 'active', 'revision' => 3, 'completed_step' => 3,
+        'sowing_method' => null, 'seed_id' => null, 'seed_quantity' => null]);
+    foreach (['farm_crop_soil_assessments', 'soil_tests', 'farm_crop_fertilizer_plans', 'farm_crop_yield_estimates'] as $table) {
+        $this->assertDatabaseCount($table, 0);
+    }
     Queue::assertNothingPushed();
     Notification::assertNothingSent();
 });
@@ -56,7 +111,8 @@ test('returns 409 on stale revisions and 422 on unfinished activation without ch
     $draft = cropManagerDraft($this, $context);
 
     $this->putJson('/api/account/farm-crops/'.$draft['id'].'/step-2', ['revision' => 99, 'boundary_source' => 'manual_area', 'cultivated_area' => 1, 'area_unit' => 'hectare'])->assertConflict();
-    $this->postJson('/api/account/farm-crops/'.$draft['id'].'/finalize', ['revision' => 1])->assertUnprocessable()->assertJsonValidationErrors(['wizard_progress.boundary', 'sowing_date']);
+    $this->postJson('/api/account/farm-crops/'.$draft['id'].'/finalize', ['revision' => 1])->assertUnprocessable()
+        ->assertJsonValidationErrors(['wizard_progress.boundary', 'cultivated_area'])->assertJsonMissingValidationErrors(['sowing_date', 'wizard_progress.seed_sowing']);
 
     $this->assertDatabaseHas('farm_crop_cycles', ['id' => $draft['id'], 'revision' => 1, 'status' => 'draft', 'cultivated_area' => null]);
 });
@@ -81,192 +137,77 @@ test('returns 404 for another farmers crop farm report and exclusion context', f
     $this->assertDatabaseCount('farm_crop_cycles', 1);
 });
 
+test('removes the former seed soil and fertilizer wizard endpoints', function (string $method, string $path) {
+    $context = cropManagerContext();
+    $ready = cropManagerReady($this, $context);
+
+    $this->json($method, '/api/account/farm-crops/'.$ready['id'].$path, ['revision' => 2])->assertNotFound();
+})->with([
+    'seed and sowing' => ['PUT', '/step-3'], 'soil assessment' => ['POST', '/step-4'], 'fertilizer planning' => ['PUT', '/step-5'],
+    'seed recommendation' => ['GET', '/seed-recommendation'], 'fertilizer recommendation' => ['GET', '/fertilizer-recommendation'],
+]);
+
 test('keeps active crops unchanged while editing and applies completed edits atomically', function () {
     $context = cropManagerContext();
     $ready = cropManagerReady($this, $context);
     $id = $ready['id'];
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 5])->assertOk();
+    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 2])->assertOk();
 
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-3', ['revision' => 6, 'seed_source' => 'farm_saved', 'sowing_date' => '2026-12-01',
-        'quantity_mode' => 'custom', 'seed_quantity' => 30, 'seed_quantity_unit' => 'kg', 'manual_estimated_cost' => 200])->assertOk()
-        ->assertJsonPath('data.has_pending_edit', true)->assertJsonPath('data.revision', 7);
-    $this->assertDatabaseHas('farm_crop_cycles', ['id' => $id, 'sowing_date' => '2026-11-01 00:00:00', 'revision' => 6]);
+    $this->putJson('/api/account/farm-crops/'.$id.'/step-1', [...cropManagerSelection($context), 'sowing_date' => '2026-12-01', 'revision' => 3])->assertOk()
+        ->assertJsonPath('data.has_pending_edit', true)->assertJsonPath('data.revision', 4)
+        ->assertJsonPath('data.next_step', 3)->assertJsonPath('data.wizard_progress.review_save', 'pending');
+    $this->assertDatabaseHas('farm_crop_cycles', ['id' => $id, 'revision' => 3]);
+    expect(FarmCropCycle::findOrFail($id)->sowing_date->toDateString())->toBe('2026-11-01');
     $this->getJson('/api/account/farm-crops/'.$id)->assertOk()->assertJsonPath('data.sowing_date', '2026-12-01');
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 7])->assertOk()->assertJsonPath('data.sowing_date', '2026-12-01');
+    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 4])->assertOk()->assertJsonPath('data.sowing_date', '2026-12-01')
+        ->assertJsonPath('data.maturity.expected_harvest_date_min', '2027-03-11');
 
     $this->assertDatabaseCount('farm_crop_edit_drafts', 0);
     expect(FarmCropCycle::findOrFail($id)->sowing_date->toDateString())->toBe('2026-12-01');
+    expect(FarmCropCycle::findOrFail($id)->planning_snapshot['history'])->toHaveCount(1);
 });
 
-test('discards pending active edits and preserves historical seed estimates after cancellation', function () {
+test('discards pending active edits and cancels the live crop on delete', function () {
     $context = cropManagerContext();
     $ready = cropManagerReady($this, $context);
     $id = $ready['id'];
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 5])->assertOk();
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 6, 'assessment_mode' => 'basic', 'fertile_capacity' => 'unknown'])->assertOk();
-    $this->deleteJson('/api/account/farm-crops/'.$id.'/edit-draft', ['revision' => 7])->assertOk()->assertJsonPath('data.revision', 8);
+    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 2])->assertOk();
+    $this->putJson('/api/account/farm-crops/'.$id.'/step-1', [...cropManagerSelection($context), 'sowing_date' => '2026-12-15', 'revision' => 3])->assertOk();
+    $this->deleteJson('/api/account/farm-crops/'.$id.'/edit-draft', ['revision' => 4])->assertOk()->assertJsonPath('data.revision', 5)
+        ->assertJsonPath('data.sowing_date', '2026-11-01')->assertJsonPath('data.has_pending_edit', false);
     $this->deleteJson('/api/account/farm-crops/'.$id)->assertOk();
 
     $this->assertDatabaseHas('farm_crop_cycles', ['id' => $id, 'status' => 'cancelled']);
-    expect(FarmCropCycle::findOrFail($id)->planning_snapshot['seed']['purchase']['estimated_cost'])->toBe('100.0000');
     $this->getJson('/api/account/farm-crops/summary')->assertOk()->assertJsonPath('data.active_crops', 0)->assertJsonPath('data.cancelled_crops', 1);
 });
 
-test('invalidates downstream reviews when area changes while preserving custom seed quantities', function () {
+test('changing the farm clears only the boundary and keeps the selection and sowing date', function () {
     $context = cropManagerContext();
     $ready = cropManagerReady($this, $context);
+    $otherFarm = Farm::factory()->for($context['user'])->inDistrict($context['district'])->create(['area' => '3.000', 'area_unit' => 'hectare']);
 
-    $this->putJson('/api/account/farm-crops/'.$ready['id'].'/step-2', ['revision' => 5, 'boundary_source' => 'manual_area', 'cultivated_area' => 2, 'area_unit' => 'hectare'])
-        ->assertOk()->assertJsonPath('data.wizard_progress.seed_sowing', 'needs_review')->assertJsonPath('data.seed_sowing_details.seed_quantity', '25.0000')
-        ->assertJsonPath('data.can_finalize', false);
-
-    $this->assertDatabaseHas('farm_crop_cycles', ['id' => $ready['id'], 'seed_quantity' => 25, 'status' => 'draft']);
+    $this->putJson('/api/account/farm-crops/'.$ready['id'].'/step-1', [...cropManagerSelection($context), 'farm_id' => $otherFarm->id, 'revision' => 2])
+        ->assertOk()->assertJsonPath('data.wizard_progress.boundary', 'needs_review')->assertJsonPath('data.next_step', 2)
+        ->assertJsonPath('data.cultivated_area', null)->assertJsonPath('data.sowing_date', '2026-11-01')->assertJsonPath('data.can_finalize', false);
 });
 
-test('saves basic soil assessment once and distinguishes unknown from zero costs', function () {
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 5, 'assessment_mode' => 'basic', 'fertile_capacity' => 'unknown',
-        'soil_moisture' => 'normal', 'drainage_condition' => 'unknown', 'water_availability' => 'limited'])->assertOk();
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 6, 'assessment_mode' => 'basic', 'fertile_capacity' => 'good'])->assertOk()
-        ->assertJsonPath('data.expenses.component_states.estimated_soil_test_cost', 'not_applicable')
-        ->assertJsonPath('data.expenses.total_estimated_cost', null)->assertJsonPath('data.expenses.known_subtotal', '100.00');
-
-    $this->assertDatabaseCount('farm_crop_soil_assessments', 1);
-});
-
-test('honors a declared basic assessment expense instead of replacing it with zero', function () {
+test('deletes drafts and leaves all master records intact', function () {
     $context = cropManagerContext();
     $ready = cropManagerReady($this, $context);
 
-    $this->putJson('/api/account/farm-crops/'.$ready['id'].'/step-4', ['revision' => 5, 'assessment_mode' => 'basic', 'estimated_cost' => '75.50'])->assertOk()
-        ->assertJsonPath('data.expenses.estimated_soil_test_cost', '75.50')->assertJsonPath('data.expenses.known_subtotal', '175.50')
-        ->assertJsonPath('data.expenses.component_states.estimated_soil_test_cost', 'known');
-});
+    $this->deleteJson('/api/account/farm-crops/'.$ready['id'])->assertOk();
 
-test('saves unverified lab measurements with their units and replaces reports after successful saves', function () {
-    Storage::fake('private');
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 5, 'assessment_mode' => 'soil_test', 'test_date' => '2026-10-20',
-        'soil_ph' => 7.2, 'nitrogen' => 12, 'measurement_units' => ['nitrogen' => 'mg/kg'], 'report' => UploadedFile::fake()->create('report.pdf', 20, 'application/pdf'),
-        'verified_at' => '2020-01-01', 'verification_status' => 'verified'])->assertOk()->assertJsonPath('data.soil_assessment.soil_test.measurement_units.nitrogen', 'mg/kg');
-    $test = FarmCropCycle::findOrFail($id)->soilTests()->sole();
-    $oldPath = $test->report_file;
-    $this->getJson('/api/account/farm-crops/'.$id.'/soil-report')->assertOk();
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 6, 'assessment_mode' => 'soil_test', 'test_date' => '2026-10-21',
-        'report' => UploadedFile::fake()->create('new.pdf', 20, 'application/pdf')])->assertOk();
-    Storage::disk('private')->assertMissing($oldPath);
-    Storage::disk('private')->assertExists($test->fresh()->report_file);
-    expect($test->fresh()->verification_status)->toBe('pending');
-    $this->assertDatabaseCount('soil_tests', 1);
-});
-
-test('returns 422 for invalid laboratory values units and upload types', function (array $override, string $field) {
-    Storage::fake('private');
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-
-    $this->postJson('/api/account/farm-crops/'.$ready['id'].'/step-4', array_replace(['revision' => 5, 'assessment_mode' => 'soil_test', 'test_date' => '2026-10-20'], $override))
-        ->assertUnprocessable()->assertJsonValidationErrors($field);
-    $this->assertDatabaseCount('soil_tests', 0);
-})->with([
-    'invalid pH' => [['soil_ph' => 15], 'soil_ph'],
-    'missing unit' => [['nitrogen' => 10], 'measurement_units.nitrogen'],
-    'negative nutrient' => [['zinc' => -1, 'measurement_units' => ['zinc' => 'ppm']], 'zinc'],
-    'unsupported unit' => [['potassium' => 1, 'measurement_units' => ['potassium' => 'bananas']], 'measurement_units.potassium'],
-    'no measurements' => [[], 'soil_test'],
-]);
-
-test('cleans failed report uploads while preserving the previous saved report', function () {
-    Storage::fake('private');
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $payload = ['revision' => 5, 'assessment_mode' => 'soil_test', 'test_date' => '2026-10-20',
-        'report' => UploadedFile::fake()->create('original.pdf', 10, 'application/pdf')];
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', $payload)->assertOk();
-    $test = FarmCropCycle::findOrFail($id)->soilTests()->sole();
-    $original = $test->report_file;
-    DB::unprepared("CREATE TRIGGER fail_crop_report BEFORE UPDATE ON soil_tests BEGIN SELECT RAISE(ABORT, 'Test report failure'); END");
-    try {
-        $this->postJson('/api/account/farm-crops/'.$id.'/step-4', array_replace($payload, ['revision' => 6,
-            'report' => UploadedFile::fake()->create('replacement.pdf', 10, 'application/pdf')]))->assertServerError();
-        Storage::disk('private')->assertExists($original);
-        expect(Storage::disk('private')->allFiles('soil-reports'))->toHaveCount(1);
-        expect($test->fresh()->report_file)->toBe($original);
-    } finally {
-        DB::unprepared('DROP TRIGGER fail_crop_report');
-    }
-});
-
-test('keeps old soil reports until the outermost replacement transaction commits', function () {
-    Storage::fake('private');
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $payload = ['revision' => 5, 'assessment_mode' => 'soil_test', 'test_date' => '2026-10-20',
-        'report' => UploadedFile::fake()->create('original.pdf', 10, 'application/pdf')];
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', $payload)->assertOk();
-    $original = FarmCropCycle::findOrFail($id)->soilTests()->sole()->report_file;
-    $level = DB::transactionLevel();
-    DB::beginTransaction();
-    try {
-        $this->postJson('/api/account/farm-crops/'.$id.'/step-4', array_replace($payload, ['revision' => 6,
-            'report' => UploadedFile::fake()->create('replacement.pdf', 10, 'application/pdf')]))->assertOk();
-        Storage::disk('private')->assertExists($original);
-        DB::commit();
-        Storage::disk('private')->assertMissing($original);
-    } finally {
-        while (DB::transactionLevel() > $level) {
-            DB::rollBack();
-        }
-    }
-});
-
-test('synchronizes multiple manual fertilizer quantities and calculates complete saved expenses', function () {
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 5, 'assessment_mode' => 'basic'])->assertOk();
-    $rows = [
-        ['custom_name' => 'My compost', 'quantity_mode' => 'custom', 'planned_quantity' => 100, 'quantity_unit_code' => 'kg', 'manual_estimated_cost' => 500],
-        ['custom_name' => 'My amendment', 'quantity_mode' => 'custom', 'planned_quantity' => 10, 'quantity_unit_code' => 'kg', 'manual_estimated_cost' => 0],
-    ];
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 6, 'skipped' => false, 'fertilizers' => $rows])->assertOk()
-        ->assertJsonPath('data.expenses.total_estimated_cost', '600.00')->assertJsonPath('data.expenses.is_complete', true);
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 7, 'skipped' => false, 'fertilizers' => [$rows[0]]])->assertOk();
-
-    $this->assertDatabaseCount('farm_crop_fertilizer_plans', 1);
-    $this->getJson('/api/account/farm-crops/'.$id.'/review')->assertOk()->assertJsonPath('data.expenses.total_estimated_cost', '600.00');
-    $this->assertDatabaseCount('farm_crop_yield_estimates', 0);
-});
-
-test('deletes draft reports and leaves all master records intact', function () {
-    Storage::fake('private');
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 5, 'assessment_mode' => 'soil_test', 'test_date' => '2026-10-20',
-        'report' => UploadedFile::fake()->create('report.pdf', 20, 'application/pdf')])->assertOk();
-    $path = FarmCropCycle::findOrFail($id)->soilTests()->sole()->report_file;
-
-    $this->deleteJson('/api/account/farm-crops/'.$id)->assertOk();
-
-    Storage::disk('private')->assertMissing($path);
-    $this->assertDatabaseCount('soil_tests', 0);
     $this->assertDatabaseCount('farm_crop_cycles', 0);
     $this->assertModelExists($context['crop']);
     $this->assertModelExists($context['farm']);
+    $this->assertModelExists($context['variety']);
 });
 
 test('excludes drafts from cultivated summaries and blocks unverifiable second manual allocations', function () {
     $context = cropManagerContext();
     $first = cropManagerReady($this, $context);
     $this->getJson('/api/account/farm-crops/summary')->assertOk()->assertJsonPath('data.total_cultivated_area', '0');
-    $this->postJson('/api/account/farm-crops/'.$first['id'].'/finalize', ['revision' => 5])->assertOk();
+    $this->postJson('/api/account/farm-crops/'.$first['id'].'/finalize', ['revision' => 2])->assertOk();
     $second = cropManagerDraft($this, $context);
     $this->putJson('/api/account/farm-crops/'.$second['id'].'/step-2', ['revision' => 1, 'boundary_source' => 'manual_area', 'cultivated_area' => 1, 'area_unit' => 'hectare'])->assertConflict();
     $this->getJson('/api/account/farm-crops/summary')->assertOk()->assertJsonPath('data.total_cultivated_area', '1');
@@ -274,75 +215,62 @@ test('excludes drafts from cultivated summaries and blocks unverifiable second m
     $this->patchJson('/api/account/farms/'.$context['farm']->id.'/status', ['is_active' => false])->assertUnprocessable()->assertJsonValidationErrors('is_active');
 });
 
-test('preserves custom quantities and sowing dates when a variety change requires dependent review', function () {
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $variety = CropVariety::factory()->for($context['crop'])->withNames()->create(['is_active' => true]);
-
-    $this->putJson('/api/account/farm-crops/'.$ready['id'].'/step-1', [...cropManagerSelection($context), 'crop_variety_id' => $variety->id, 'revision' => 5])
-        ->assertOk()->assertJsonPath('data.seed_sowing_details.seed_quantity', '25.0000')->assertJsonPath('data.sowing_date', '2026-11-01')
-        ->assertJsonPath('data.wizard_progress.seed_sowing', 'needs_review')->assertJsonPath('data.expenses.estimated_seed_cost', null);
-});
-
-test('keeps regional plans current when the farmer changes only the display locale', function () {
+test('keeps the review current when the farmer changes only the display locale', function () {
     $context = cropManagerContext();
     $context['district']->translations()->create(['locale' => 'hi', 'name' => 'जयपुर']);
     $ready = cropManagerReady($this, $context);
 
     $this->withHeader('X-Locale', 'hi')->getJson('/api/account/farm-crops/'.$ready['id'].'/review')->assertOk()
         ->assertJsonPath('data.can_finalize', true)->assertJsonPath('data.regional_context.applicable_regions.0.name', 'जयपुर')
-        ->assertJsonPath('data.wizard_progress.seed_sowing', 'completed');
+        ->assertJsonPath('data.wizard_progress.boundary', 'completed');
 });
 
-test('preserves accepted basic soil records when an active crop assessment is skipped', function () {
+test('normalizes former six-step crops and preserves their seed soil and fertilizer records when edited', function () {
     $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 5, 'assessment_mode' => 'basic', 'fertile_capacity' => 'poor'])->assertOk();
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 6, 'skipped' => true])->assertOk();
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 7])->assertOk();
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 8, 'assessment_mode' => 'skipped'])->assertOk();
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 9, 'skipped' => true])->assertOk();
+    $cycle = FarmCropCycle::factory()->for($context['farm'])->create([
+        'crop_id' => $context['crop']->id, 'crop_variety_id' => $context['variety']->id, 'season_id' => $context['season']->id,
+        'created_by' => $context['user']->id, 'status' => 'active', 'revision' => 6, 'completed_step' => 6,
+        'sowing_method' => 'broadcasting', 'sowing_date' => '2026-11-01', 'seed_source' => 'farm_saved', 'seed_quantity' => '25',
+        'seed_quantity_unit' => 'kg', 'boundary_source' => 'manual_area', 'cultivated_area' => '1', 'area_unit' => 'hectare',
+        'wizard_progress' => ['crop_selection' => 'completed', 'boundary' => 'completed', 'seed_sowing' => 'completed',
+            'soil_assessment' => 'skipped', 'fertilizer_planning' => 'completed'],
+        'planning_snapshot' => ['seed' => ['maturity' => ['maturity_status' => 'unavailable']], 'expenses' => ['known_subtotal' => '100.00']],
+    ]);
+    $cycle->forceFill(['finalized_at' => now()])->save();
+    $cycle->soilAssessments()->create(['fertile_capacity' => 'unknown', 'assessment_source' => 'farmer']);
+    $cycle->fertilizerPlans()->create(['custom_name' => 'Farmyard manure', 'quantity_mode' => 'custom', 'planned_quantity' => '5', 'quantity_unit_code' => 'kg']);
+    $token = $context['user']->createToken('crop', ['frontend'])->plainTextToken;
 
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 10])->assertOk()->assertJsonPath('data.soil_assessment.basic_assessment', null);
+    $this->withToken($token)->getJson('/api/account/farm-crops/'.$cycle->id)->assertOk()
+        ->assertJsonPath('data.wizard_progress', ['crop_selection' => 'completed', 'boundary' => 'completed', 'review_save' => 'completed'])
+        ->assertJsonPath('data.completed_step', 3)->assertJsonPath('data.next_step', null)->assertJsonPath('data.maturity.maturity_status', 'unavailable');
+    $this->putJson('/api/account/farm-crops/'.$cycle->id.'/step-1', [...cropManagerSelection($context), 'sowing_date' => '2026-11-10', 'revision' => 6])->assertOk()
+        ->assertJsonPath('data.next_step', 3);
+    $this->postJson('/api/account/farm-crops/'.$cycle->id.'/finalize', ['revision' => 7])->assertOk()->assertJsonPath('data.completed_step', 3);
 
-    $this->assertDatabaseHas('farm_crop_soil_assessments', ['farm_crop_cycle_id' => $id, 'fertile_capacity' => 'poor']);
+    $this->assertDatabaseHas('farm_crop_cycles', ['id' => $cycle->id, 'sowing_method' => 'broadcasting',
+        'seed_source' => 'farm_saved', 'seed_quantity' => 25, 'seed_quantity_unit' => 'kg']);
+    expect(FarmCropCycle::findOrFail($cycle->id)->sowing_date->toDateString())->toBe('2026-11-10');
+    $this->assertDatabaseCount('farm_crop_soil_assessments', 1);
+    $this->assertDatabaseCount('farm_crop_fertilizer_plans', 1);
+    expect(FarmCropCycle::findOrFail($cycle->id)->planning_snapshot['history'][0]['expenses'])->toBe(['known_subtotal' => '100.00']);
 });
 
-test('returns 422 when a fertilizer plan ID belongs to a different crop', function () {
+test('resumes a former six-step draft on the current steps without its old seed soil and fertilizer progress', function () {
     $context = cropManagerContext();
-    $first = cropManagerReady($this, $context);
-    $this->putJson('/api/account/farm-crops/'.$first['id'].'/step-5', ['revision' => 5, 'skipped' => false, 'fertilizers' => [[
-        'custom_name' => 'Compost', 'quantity_mode' => 'custom', 'planned_quantity' => 10, 'quantity_unit_code' => 'kg',
-    ]]])->assertOk();
-    $planId = FarmCropCycle::findOrFail($first['id'])->fertilizerPlans()->sole()->id;
-    $second = cropManagerReady($this, $context);
+    $cycle = FarmCropCycle::factory()->for($context['farm'])->create([
+        'crop_id' => $context['crop']->id, 'crop_variety_id' => $context['variety']->id, 'season_id' => $context['season']->id,
+        'created_by' => $context['user']->id, 'status' => 'draft', 'revision' => 3, 'completed_step' => 3, 'sowing_date' => '2026-11-01',
+        'boundary_source' => 'manual_area', 'cultivated_area' => '1', 'area_unit' => 'hectare',
+        'wizard_progress' => ['crop_selection' => 'completed', 'boundary' => 'completed', 'seed_sowing' => 'completed',
+            'soil_assessment' => 'pending', 'fertilizer_planning' => 'pending'],
+    ]);
+    $token = $context['user']->createToken('crop', ['frontend'])->plainTextToken;
 
-    $this->putJson('/api/account/farm-crops/'.$second['id'].'/step-5', ['revision' => 5, 'skipped' => false, 'fertilizers' => [[
-        'id' => $planId, 'custom_name' => 'Changed', 'quantity_mode' => 'custom', 'planned_quantity' => 1, 'quantity_unit_code' => 'kg',
-    ]]])->assertUnprocessable()->assertJsonValidationErrors('fertilizers.0.id');
-    $this->assertDatabaseHas('farm_crop_fertilizer_plans', ['id' => $planId, 'custom_name' => 'Compost', 'planned_quantity' => 10]);
-});
-
-test('retains historical soil reports while discarding unaccepted active edit uploads', function () {
-    Storage::fake('private');
-    $context = cropManagerContext();
-    $ready = cropManagerReady($this, $context);
-    $id = $ready['id'];
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 5, 'assessment_mode' => 'soil_test', 'test_date' => '2026-11-01',
-        'report' => UploadedFile::fake()->create('original.pdf', 10, 'application/pdf')])->assertOk();
-    $original = FarmCropCycle::findOrFail($id)->soilTests()->sole()->report_file;
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 6, 'skipped' => true])->assertOk();
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 7])->assertOk();
-    $this->postJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 8, 'assessment_mode' => 'soil_test', 'test_date' => '2026-11-02',
-        'report' => UploadedFile::fake()->create('pending.pdf', 10, 'application/pdf')])->assertOk();
-    $pending = FarmCropCycle::findOrFail($id)->editDraft->draft_data['soil_test']['report_file'];
-
-    $this->deleteJson('/api/account/farm-crops/'.$id.'/edit-draft', ['revision' => 9])->assertOk();
-
-    Storage::disk('private')->assertExists($original);
-    Storage::disk('private')->assertMissing($pending);
-    $this->assertDatabaseCount('soil_tests', 1);
+    $this->withToken($token)->getJson('/api/account/farm-crops/'.$cycle->id)->assertOk()
+        ->assertJsonPath('data.wizard_progress', ['crop_selection' => 'completed', 'boundary' => 'completed', 'review_save' => 'pending'])
+        ->assertJsonPath('data.completed_step', 2)->assertJsonPath('data.next_step', 3)->assertJsonPath('data.can_finalize', true);
+    $this->postJson('/api/account/farm-crops/'.$cycle->id.'/finalize', ['revision' => 3])->assertOk()->assertJsonPath('data.status', 'active');
 });
 
 test('returns 422 for invalid GeoJSON before persisting any boundary', function (array $boundary) {

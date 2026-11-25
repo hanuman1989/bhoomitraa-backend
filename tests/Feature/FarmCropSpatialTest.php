@@ -40,12 +40,9 @@ function nativeCropReady(TestCase $test, array $context, array $boundary, string
 {
     $draft = cropManagerDraft($test, $context);
     $id = $draft['id'];
-    $test->putJson('/api/account/farm-crops/'.$id.'/step-2', ['revision' => 1, 'boundary_source' => $source, 'boundary' => $boundary,
-        'area_unit' => 'hectare', 'gps_accuracy_m' => 3.2])->assertOk();
-    $test->putJson('/api/account/farm-crops/'.$id.'/step-3', ['revision' => 2, 'seed_source' => 'farm_saved', 'sowing_date' => '2026-11-01', 'quantity_mode' => 'unknown'])->assertOk();
-    $test->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 3, 'assessment_mode' => 'skipped'])->assertOk();
 
-    return $test->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 4, 'skipped' => true])->assertOk()->json('data');
+    return $test->putJson('/api/account/farm-crops/'.$id.'/step-2', ['revision' => 1, 'boundary_source' => $source, 'boundary' => $boundary,
+        'area_unit' => 'hectare', 'gps_accuracy_m' => 3.2])->assertOk()->json('data');
 }
 
 test('saves and activates a crop matching the precise farm boundary', function (string $source) {
@@ -61,7 +58,7 @@ test('saves and activates a crop matching the precise farm boundary', function (
         $boundary = $this->getJson($farmUrl)->assertOk()->json('data.boundary');
 
         $ready = nativeCropReady($this, $context, $boundary, $source);
-        $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 5])
+        $this->postJson('/api/account/farm-crops/'.$ready['id'].'/finalize', ['revision' => 2])
             ->assertOk()->assertJsonPath('data.status', 'active')->assertJsonPath('data.boundary_details.boundary', $full);
 
         $this->assertDatabaseHas('farm_crop_cycles', ['id' => $ready['id'], 'status' => 'active', 'boundary_source' => $source]);
@@ -128,9 +125,9 @@ test('native spatial allocations support adjacent crops union occupancy finaliza
         $this->withToken($token)->patchJson('/api/account/farms/'.$context['farm']->id.'/boundary', ['boundary' => $full, 'boundary_source' => 'manual'])->assertOk();
         $first = nativeCropReady($this, $context, $left);
         $this->getJson('/api/account/farms/'.$context['farm']->id.'/crop-boundaries')->assertOk()->assertJsonCount(0, 'data.existing_active_crops');
-        $this->postJson('/api/account/farm-crops/'.$first['id'].'/finalize', ['revision' => 5])->assertOk();
+        $this->postJson('/api/account/farm-crops/'.$first['id'].'/finalize', ['revision' => 2])->assertOk();
         $second = nativeCropReady($this, $context, $right, 'gps');
-        $this->postJson('/api/account/farm-crops/'.$second['id'].'/finalize', ['revision' => 5])->assertOk();
+        $this->postJson('/api/account/farm-crops/'.$second['id'].'/finalize', ['revision' => 2])->assertOk();
         $stored = DB::selectOne('SELECT ST_SRID(boundary) AS srid FROM farm_crop_cycles WHERE id = ?', [$first['id']]);
         expect((int) $stored->srid)->toBe(4326);
         $this->getJson('/api/account/farm-crops/map?per_page=1')->assertOk()->assertJsonCount(2, 'data');
@@ -144,8 +141,8 @@ test('native spatial allocations support adjacent crops union occupancy finaliza
         $this->putJson('/api/account/farm-crops/'.$third['id'].'/step-2', ['revision' => 1, 'boundary_source' => 'manual', 'boundary' => cropManagerPolygon(74, 74.001, 26, 26.001)])->assertUnprocessable()->assertJsonValidationErrors('boundary');
         $bowtie = ['type' => 'MultiPolygon', 'coordinates' => [[[[75, 26], [75.001, 26.001], [75, 26.001], [75.001, 26], [75, 26]]]]];
         $this->putJson('/api/account/farm-crops/'.$third['id'].'/step-2', ['revision' => 1, 'boundary_source' => 'gps', 'boundary' => $bowtie])->assertUnprocessable()->assertJsonValidationErrors('boundary');
-        $this->putJson('/api/account/farm-crops/'.$first['id'].'/step-2', ['revision' => 6, 'boundary_source' => 'manual', 'boundary' => $left])->assertOk();
-        $this->deleteJson('/api/account/farm-crops/'.$first['id'].'/edit-draft', ['revision' => 7])->assertOk();
+        $this->putJson('/api/account/farm-crops/'.$first['id'].'/step-2', ['revision' => 3, 'boundary_source' => 'manual', 'boundary' => $left])->assertOk();
+        $this->deleteJson('/api/account/farm-crops/'.$first['id'].'/edit-draft', ['revision' => 4])->assertOk();
         $this->patchJson('/api/account/farms/'.$context['farm']->id.'/boundary', ['boundary' => cropManagerPolygon(75, 75.001, 26, 26.001), 'boundary_source' => 'manual'])
             ->assertUnprocessable()->assertJsonValidationErrors('boundary');
         $this->patchJson('/api/account/farms/'.$context['farm']->id.'/boundary', ['boundary' => null])->assertUnprocessable();
@@ -163,8 +160,8 @@ test('native spatial allocations support adjacent crops union occupancy finaliza
         $this->patchJson('/api/account/farms/'.$otherFarm->id.'/boundary', ['boundary' => $full, 'boundary_source' => 'manual'])->assertOk();
         $a = nativeCropReady($this, $context, $left);
         $b = nativeCropReady($this, $context, $left);
-        $this->postJson('/api/account/farm-crops/'.$a['id'].'/finalize', ['revision' => 5])->assertOk();
-        $this->postJson('/api/account/farm-crops/'.$b['id'].'/finalize', ['revision' => 5])->assertConflict();
+        $this->postJson('/api/account/farm-crops/'.$a['id'].'/finalize', ['revision' => 2])->assertOk();
+        $this->postJson('/api/account/farm-crops/'.$b['id'].'/finalize', ['revision' => 2])->assertConflict();
         $this->assertDatabaseHas('farm_crop_cycles', ['id' => $b['id'], 'status' => 'draft']);
 
         $raceFarm = Farm::factory()->for($context['user'])->inDistrict($context['district'])->create();
@@ -191,7 +188,7 @@ while (! is_file($input['go'])) {
 }
 $request = Illuminate\Http\Request::create('/api/account/farm-crops/'.$input['id'].'/finalize', 'POST', server: [
     'CONTENT_TYPE' => 'application/json', 'HTTP_ACCEPT' => 'application/json', 'HTTP_AUTHORIZATION' => 'Bearer '.$input['token'],
-], content: '{"revision":5}');
+], content: '{"revision":2}');
 $response = $kernel->handle($request);
 echo json_encode(['status' => $response->getStatusCode(), 'body' => json_decode($response->getContent(), true)], JSON_THROW_ON_ERROR);
 $kernel->terminate($request, $response);

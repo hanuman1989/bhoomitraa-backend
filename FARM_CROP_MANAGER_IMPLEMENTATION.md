@@ -1,5 +1,16 @@
 # Farmer Crop Manager implementation
 
+> **Revision (2026-11-23): three-step Add/Edit Crop wizard.** The wizard is now
+> 1. Crop Selection (farm, season, crop, variety, **sowing date**), 2. Select Boundary, 3. Review & Save.
+> Sowing method, seed, soil assessment and fertilizer planning are no longer collected, validated or written
+> by the wizard; they move to the Farmer Crop Timeline. The `step-3`, `step-4`, `step-5`,
+> `seed-recommendation` and `fertilizer-recommendation` endpoints were removed, and their legacy inputs are
+> rejected with 422 on Step 1. No columns or tables were dropped: existing seed, soil, fertilizer and yield
+> records stay intact, the wizard never creates or deletes them, and the soil-report download endpoints remain.
+> `wizard_progress` uses `crop_selection`, `boundary` and `review_save`; progress saved by the former six-step
+> wizard is normalized on read (`FarmCropCycle::normalizeProgress()`), and its seed/soil/fertilizer keys are
+> ignored. Sections below that describe Steps 3–5, expenses or expected yield record the former behaviour.
+
 Implemented for the installed Laravel 12.69.3 / Sanctum 4.3.3 application. No dependencies, frontend assets, timeline generation, notifications, actual expenses, or harvest-completion workflow were added.
 
 ## Status and verification
@@ -129,12 +140,7 @@ Regional recommendation catalogues require `farm_id` or `crop_cycle_id`; `crop_i
 | GET /farm-crops/{id} | Complete saved state, pending edit if present, progress, revision, next step |
 | PUT /farm-crops/{id}/step-1 | Selection update and revision |
 | PUT /farm-crops/{id}/step-2 | Boundary/area and revision |
-| PUT /farm-crops/{id}/step-3 | Seed/sowing/quantity/purchase plan and revision |
-| POST or PUT /farm-crops/{id}/step-4 | Soil assessment/report and revision; POST supports multipart |
-| PUT /farm-crops/{id}/step-5 | Fertilizer rows or skip, and revision |
-| GET /farm-crops/{id}/seed-recommendation | Optional seed_id preview, compatible with saved crop/variety |
-| GET /farm-crops/{id}/fertilizer-recommendation | Saved crop/farm/area context |
-| GET /farm-crops/{id}/review | Read-only complete review; no estimate-history insertion |
+| GET /farm-crops/{id}/review | Read-only review: crop information, sowing date, maturity estimate, boundary and area |
 | POST /farm-crops/{id}/finalize | Current revision; validates and activates only |
 | DELETE /farm-crops/{id} | Delete draft or cancel active crop; historical completed/cancelled crops cannot be deleted |
 | DELETE /farm-crops/{id}/edit-draft | Current revision; discard pending active edit |
@@ -153,10 +159,12 @@ IDs and values below illustrate payload structure only. Use actual catalogue IDs
 `POST /api/account/farm-crops`, header `Idempotency-Key: <UUID>`:
 
 ```json
-{"farm_id":1,"season_id":1,"crop_id":1,"crop_variety_id":null,"sowing_method":"broadcasting"}
+{"farm_id":1,"season_id":1,"crop_id":1,"crop_variety_id":null,"sowing_date":"2026-11-01"}
 ```
 
-Creates a draft with revision 1 and next step 2. Other sowing codes: `line_sowing`, `drilling`, `transplanting`, `dibbling`; unknown can be null.
+Creates a draft with revision 1 and next step 2. `sowing_date` is required (`Y-m-d`); past and future dates are accepted. The same fields are sent to `PUT /farm-crops/{id}/step-1` with `revision`. Former wizard inputs (`sowing_method`, seed fields, `assessment_mode`, `fertilizers`, and similar) are rejected with 422.
+
+The response includes `maturity` and the stored `expected_harvest_date_min`/`_max`: the sowing date plus the variety's `maturity_days_min`/`_max`, only when the variety has an active, verified knowledge source. Otherwise `maturity.maturity_status` is `unavailable`, which never blocks saving. A single `expected_harvest_date` is stored only when both ends are equal; no midpoint is invented.
 
 ### Step 2
 
@@ -176,70 +184,36 @@ Unmapped farm fallback:
 
 The fallback cannot exceed recorded land area or authorize a second active allocation. Supported area codes come from `config/area_units.php`, including explicitly configured `bigha_kaccha` and `bigha_pakka`; no regional Bigha conversion was introduced.
 
-### Step 3
+### Former Steps 3–5 (removed)
 
-```json
-{"revision":2,"seed_source":"farm_saved","sowing_date":"2026-11-01","quantity_mode":"custom","seed_quantity":"25","seed_quantity_unit":"kg","manual_estimated_cost":"100"}
-```
-
-Catalogue mode additionally uses `seed_id`, optional `seed_lot_id` and `seed_price_id`. Sources: `catalogue`, `farm_saved`, `local`, `other`, `unknown`. Quantity modes: `suggested`, `custom`, `unknown`. Suggested quantities are calculated on the backend. Custom quantities stay separate from suggestions.
-
-Optional `seed_notes` and `currency_code` are supported. Price selection requires a known quantity and compatible package unit.
-
-### Step 4
-
-```json
-{"revision":3,"assessment_mode":"basic","fertile_capacity":"unknown","soil_moisture":"normal","drainage_condition":"unknown","water_availability":"limited"}
-```
-
-Basic codes are centralized in `config/farm_crops.php`; none are preselected by the backend.
-
-Laboratory mode:
-
-```json
-{"revision":3,"assessment_mode":"soil_test","test_date":"2026-10-20","soil_ph":"7.2","nitrogen":"12","measurement_units":{"nitrogen":"mg/kg"},"estimated_cost":"0"}
-```
-
-Also supports sample_collected_at, laboratory_name, report_number, sample_depth_cm, electrical_conductivity, organic_carbon, phosphorus, potassium, sulphur, zinc, iron, copper, manganese, boron, and notes. Use multipart POST with a `report` file for PDF/JPEG/PNG/WebP, maximum 10 MB. Use `remove_report: true` to remove the current report. Reports are private; client verification fields are ignored.
-
-Skip: `{"revision":3,"assessment_mode":"skipped"}`.
-
-### Step 5
-
-```json
-{"revision":4,"skipped":false,"fertilizers":[{"fertilizer_id":1,"fertilizer_recommendation_id":null,"quantity_mode":"custom","planned_quantity":"10","quantity_unit_code":"kg","fertilizer_price_id":null,"manual_estimated_cost":"500"}]}
-```
-
-Rows may include an existing crop-owned plan `id`, custom_name instead of fertilizer_id, currency_code, and notes. Omitted selections are removed from the current plan; historical accepted context remains preserved. Duplicate products, custom names, and plan IDs are rejected.
-
-Skip: `{"revision":4,"skipped":true}`.
+Seed & sowing, soil assessment and fertilizer planning are no longer part of the wizard; their endpoints return 404. Records already saved through them remain in `farm_crop_cycles` (seed and sowing-method columns), `farm_crop_soil_assessments`, `soil_tests`, `farm_crop_fertilizer_plans` and `farm_crop_yield_estimates`. Editing a crop never clears or rewrites them, and the authorized soil-report downloads remain available.
 
 ### Saved step response
 
-Every step returns the complete current crop resource. The following shows its common fields; `saved_step_data` contains crop selection, boundary, seed/sowing, soil, and fertilizer sections:
+Every step returns the complete current crop resource. The following shows its common fields; `saved_step_data` contains the crop selection (with `sowing_date`) and boundary sections:
 
 ```json
 {
   "status":true,
-  "data":{"id":1,"status":"draft","completed_step":2,"next_step":3,"wizard_progress":{"crop_selection":"completed","boundary":"completed","seed_sowing":"pending","soil_assessment":"pending","fertilizer_planning":"pending"},"revision":2,"saved_step_data":{}},
+  "data":{"id":1,"status":"draft","completed_step":2,"next_step":3,"wizard_progress":{"crop_selection":"completed","boundary":"completed","review_save":"pending"},"revision":2,"maturity":{"maturity_status":"available","maturity_days_min":100,"maturity_days_max":120,"expected_harvest_date":null,"expected_harvest_date_min":"2027-02-09","expected_harvest_date_max":"2027-03-01"},"saved_step_data":{}},
   "pagination":null,
   "message":"Crop boundary saved successfully."
 }
 ```
 
-The example abbreviates `data`; actual responses contain all saved sections and regional context.
+The example abbreviates `data`; actual responses contain the saved sections and regional context. Crops and drafts saved by the former six-step wizard report the same three progress keys; their `completed_step` is normalized (for example, 6 becomes 3).
 
 ### Review and final activation
 
-`GET /farm-crops/{id}/review` includes farm/crop/variety/season, region context, boundary statistics, seed and purchase details, soil and authorized report information, selected fertilizer plans, expenses, expected yield, validation_issues, can_finalize, and progress.
+`GET /farm-crops/{id}/review` includes farm/crop/variety/season, sowing date, maturity estimate, region context, boundary statistics, validation_issues, can_finalize, and progress.
 
 `POST /farm-crops/{id}/finalize`:
 
 ```json
-{"revision":5}
+{"revision":2}
 ```
 
-On success, status becomes `active`, completed_step becomes 6, revision advances, and `timeline_generated` remains false. The response message is `Crop saved successfully.` Repeating the accepted finalization revision returns the already-finalized crop without another yield record.
+Finalization requires only a completed Crop Selection (including a valid sowing date) and Boundary. On success, status becomes `active`, `wizard_progress.review_save` and `completed_step` 3 are set, revision advances, the harvest estimate is refreshed, and `timeline_generated` remains false. No seed, soil, fertilizer or yield records are created. The response message is `Crop saved successfully.` Repeating the accepted finalization revision returns the already-finalized crop.
 
 ## Recommendation and estimate contracts
 

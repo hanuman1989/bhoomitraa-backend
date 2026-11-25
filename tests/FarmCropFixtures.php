@@ -30,7 +30,7 @@ function cropManagerContext(): array
 function cropManagerSelection(array $context): array
 {
     return ['farm_id' => $context['farm']->id, 'crop_id' => $context['crop']->id, 'season_id' => $context['season']->id,
-        'crop_variety_id' => $context['variety']->id, 'sowing_method' => 'broadcasting'];
+        'crop_variety_id' => $context['variety']->id, 'sowing_date' => '2026-11-01'];
 }
 
 function cropManagerDraft(TestCase $test, array $context): array
@@ -39,17 +39,13 @@ function cropManagerDraft(TestCase $test, array $context): array
         ->postJson('/api/account/farm-crops', cropManagerSelection($context), ['Idempotency-Key' => (string) Str::uuid()])->assertCreated()->json('data');
 }
 
-/** @return array<string, mixed> */
+/** A draft ready for Review & Save (revision 2): Crop Selection plus a manual-area boundary. */
 function cropManagerReady(TestCase $test, array $context): array
 {
     $draft = cropManagerDraft($test, $context);
-    $id = $draft['id'];
-    $test->putJson('/api/account/farm-crops/'.$id.'/step-2', ['revision' => 1, 'boundary_source' => 'manual_area', 'cultivated_area' => '1', 'area_unit' => 'hectare'])->assertOk();
-    $test->putJson('/api/account/farm-crops/'.$id.'/step-3', ['revision' => 2, 'seed_source' => 'farm_saved', 'sowing_date' => '2026-11-01',
-        'quantity_mode' => 'custom', 'seed_quantity' => '25', 'seed_quantity_unit' => 'kg', 'manual_estimated_cost' => '100'])->assertOk();
-    $test->putJson('/api/account/farm-crops/'.$id.'/step-4', ['revision' => 3, 'assessment_mode' => 'skipped'])->assertOk();
 
-    return $test->putJson('/api/account/farm-crops/'.$id.'/step-5', ['revision' => 4, 'skipped' => true])->assertOk()->json('data');
+    return $test->putJson('/api/account/farm-crops/'.$draft['id'].'/step-2', ['revision' => 1, 'boundary_source' => 'manual_area', 'cultivated_area' => '1', 'area_unit' => 'hectare'])
+        ->assertOk()->json('data');
 }
 
 /** @return array{type: string, coordinates: array} */

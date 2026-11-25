@@ -15,6 +15,7 @@ class CropVarietyResource extends JsonResource
 
         return [
             'id' => $this->id, ...$this->resource->only(['crop_id', 'slug', 'variety_code', 'maturity_days_min', 'maturity_days_max']),
+            'maturity_verified' => $this->whenLoaded('knowledgeSources', fn (): bool => $this->resource->hasVerifiedMaturity()),
             'name' => $this->localized_name ?? $translation?->name,
             'description' => $translation?->description,
             'region_notes' => $translation?->region_notes,

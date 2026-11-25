@@ -432,3 +432,29 @@ test('growth stage templates activate and report overlaps with active templates 
     $stageless = builderTemplate($context, ['crop_stage_id' => null, 'start_offset_days' => 100, 'end_offset_days' => 110]);
     expect($stageless->potentialOverlapIds([]))->toBe([]);
 });
+
+test('final smart action keys are advertised and saved while legacy proposals are rejected', function () {
+    $context = builderContext();
+    $token = builderToken();
+    $template = builderTemplate($context, ['smart_actions' => ['crop_details']]);
+    $path = '/api/admin/crop-activity-templates/'.$template->id;
+    $final = ['field_layout_spacing', 'sowing_planting_method', 'choose_seed'];
+
+    $actions = $this->withToken($token)->getJson('/api/admin/crop-activity-templates/timeline-builder/metadata')
+        ->assertOk()->json('data.smart_actions');
+    expect($actions)->toHaveCount(39)->toContain(...$final)->not->toContain('choose_crop_variety_seed', 'planting_method');
+
+    $this->withToken($token)->patchJson($path, ['smart_actions' => ['crop_details', ...$final]])
+        ->assertOk()->assertJsonPath('data.smart_actions', ['crop_details', ...$final]);
+
+    $this->withToken($token)->postJson('/api/admin/crop-activity-templates/bulk', [
+        'ids' => [$template->id], 'operation' => 'smart_actions', 'data' => ['smart_actions' => ['seed_record'], 'mode' => 'add'],
+    ])->assertOk()->assertJsonPath('data.results.0.status', 'updated');
+    expect($template->fresh()->smart_actions)->toBe(['crop_details', ...$final, 'seed_record']);
+
+    foreach (['choose_crop_variety_seed', 'planting_method'] as $legacy) {
+        $this->withToken($token)->patchJson($path, ['smart_actions' => [$legacy]])
+            ->assertUnprocessable()->assertJsonValidationErrors('smart_actions.0');
+    }
+    expect($template->fresh()->smart_actions)->toBe(['crop_details', ...$final, 'seed_record']);
+});

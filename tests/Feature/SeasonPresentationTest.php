@@ -181,11 +181,11 @@ test('shows metadata on resumable crop resources and accepts farming dates outsi
     $this->getJson('/api/account/farm-crops')->assertOk()->assertJsonPath('data.0.season.start_month', 10);
     $this->getJson('/api/account/farm-crops/'.$id.'/review')->assertOk()->assertJsonPath('data.season.end_month', 3)->assertJsonPath('data.season.icon', 'sprout');
 
-    $this->putJson('/api/account/farm-crops/'.$id.'/step-3', ['revision' => 5, 'seed_source' => 'farm_saved', 'sowing_date' => '2026-07-15',
-        'quantity_mode' => 'unknown'])->assertOk()->assertJsonPath('data.sowing_date', '2026-07-15');
+    $this->putJson('/api/account/farm-crops/'.$id.'/step-1', [...cropManagerSelection($context), 'sowing_date' => '2026-07-15', 'revision' => 2])
+        ->assertOk()->assertJsonPath('data.sowing_date', '2026-07-15');
     $context['season']->update(['start_month' => 1, 'end_month' => 1, 'icon' => 'leaf']);
     $this->getJson('/api/account/farm-crops/'.$id)->assertOk()->assertJsonPath('data.season.icon', 'leaf')->assertJsonPath('data.can_finalize', true);
-    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 6])->assertOk()->assertJsonPath('data.status', 'active');
+    $this->postJson('/api/account/farm-crops/'.$id.'/finalize', ['revision' => 3])->assertOk()->assertJsonPath('data.status', 'active');
 });
 
 test('returns season metadata in timeline previews without restricting sowing dates', function () {
