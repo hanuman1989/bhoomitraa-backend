@@ -184,11 +184,6 @@ Route::prefix('account')->name('account.')->group(function (): void {
             Route::get('{id}', 'show')->whereNumber('id')->name('show');
             Route::put('{id}/step-1', 'updateStepOne')->whereNumber('id')->name('step-1');
             Route::put('{id}/step-2', 'saveStepTwo')->whereNumber('id')->name('step-2');
-            Route::put('{id}/step-3', 'saveStepThree')->whereNumber('id')->name('step-3');
-            Route::match(['POST', 'PUT'], '{id}/step-4', 'saveStepFour')->whereNumber('id')->name('step-4');
-            Route::put('{id}/step-5', 'saveStepFive')->whereNumber('id')->name('step-5');
-            Route::get('{id}/seed-recommendation', 'getSeedRecommendation')->whereNumber('id')->name('seed-recommendation');
-            Route::get('{id}/fertilizer-recommendation', 'getFertilizerRecommendation')->whereNumber('id')->name('fertilizer-recommendation');
             Route::get('{id}/review', 'review')->whereNumber('id')->name('review');
             Route::post('{id}/finalize', 'finalize')->whereNumber('id')->name('finalize');
             Route::delete('{id}', 'destroy')->whereNumber('id')->name('destroy');

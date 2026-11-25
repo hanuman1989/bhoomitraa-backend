@@ -20,16 +20,25 @@ class FarmCropCycle extends Model
     /** @use HasFactory<FarmCropCycleFactory> */
     use HasFactory;
 
-    public const STEPS = ['crop_selection', 'boundary', 'seed_sowing', 'soil_assessment', 'fertilizer_planning'];
+    /** Three-step Add/Edit Crop wizard: Crop Selection, Select Boundary, Review & Save. */
+    public const STEPS = ['crop_selection', 'boundary', 'review_save'];
 
-    public const SELECTION_FIELDS = ['farm_id', 'crop_id', 'crop_variety_id', 'season_id', 'sowing_method'];
+    /** Steps that hold farmer input and must be complete before Review & Save. */
+    public const DATA_STEPS = ['crop_selection', 'boundary'];
 
-    public const SEED_FIELDS = ['seed_id', 'seed_lot_id', 'seed_source', 'seed_quantity', 'seed_quantity_unit', 'seed_notes', 'sowing_date',
-        'expected_harvest_date', 'expected_harvest_date_min', 'expected_harvest_date_max'];
+    public const SELECTION_FIELDS = ['farm_id', 'crop_id', 'crop_variety_id', 'season_id', 'sowing_date'];
+
+    public const HARVEST_FIELDS = ['expected_harvest_date', 'expected_harvest_date_min', 'expected_harvest_date_max'];
+
+    /**
+     * Seed and sowing-method values captured by the former six-step wizard. They are no longer
+     * written by the crop wizard but stay fillable so pending edits and history round-trip intact.
+     */
+    public const LEGACY_FIELDS = ['sowing_method', 'seed_id', 'seed_lot_id', 'seed_source', 'seed_quantity', 'seed_quantity_unit', 'seed_notes'];
 
     public const BOUNDARY_FIELDS = ['boundary_source', 'cultivated_area', 'area_unit', 'latitude', 'longitude', 'gps_accuracy_m'];
 
-    protected $fillable = [...self::SELECTION_FIELDS, ...self::SEED_FIELDS, ...self::BOUNDARY_FIELDS];
+    protected $fillable = [...self::SELECTION_FIELDS, ...self::HARVEST_FIELDS, ...self::LEGACY_FIELDS, ...self::BOUNDARY_FIELDS];
 
     protected $hidden = ['boundary', 'creation_key', 'creation_payload_hash', 'created_by'];
 
@@ -112,15 +121,57 @@ class FarmCropCycle extends Model
             ? 'farm_crop_cycles.boundary AS boundary_geojson' : 'ST_AsGeoJSON(farm_crop_cycles.boundary) AS boundary_geojson');
     }
 
+    /**
+     * Wizard progress normalized to the three current steps. Progress saved by the former
+     * six-step wizard keeps its crop_selection and boundary states; its seed, soil and
+     * fertilizer keys are ignored. Review & Save is complete once the crop was finalized.
+     *
+     * @param  array<string, string>|null  $raw
+     * @return array<string, string>
+     */
+    public static function normalizeProgress(?array $raw, bool $finalized): array
+    {
+        $progress = [];
+        foreach (self::DATA_STEPS as $step) {
+            $progress[$step] = $raw[$step] ?? 'pending';
+        }
+        $progress['review_save'] = $raw['review_save'] ?? ($finalized ? 'completed' : 'pending');
+
+        return $progress;
+    }
+
+    /** @return array<string, string> */
+    public function progress(): array
+    {
+        $pendingEdit = $this->relationLoaded('editDraft') && $this->editDraft !== null;
+
+        return self::normalizeProgress($this->wizard_progress, $this->finalized_at !== null && ! $pendingEdit);
+    }
+
+    /** Number of leading completed steps (0-3) in the current wizard. */
+    public function completedSteps(): int
+    {
+        $count = 0;
+        foreach ($this->progress() as $state) {
+            if ($state !== 'completed') {
+                break;
+            }
+            $count++;
+        }
+
+        return $count;
+    }
+
     public function nextStep(): ?int
     {
-        foreach (self::STEPS as $index => $step) {
-            if (! in_array($this->wizard_progress[$step] ?? 'pending', ['completed', 'skipped'], true)) {
+        $progress = $this->progress();
+        foreach (self::DATA_STEPS as $index => $step) {
+            if ($progress[$step] !== 'completed') {
                 return $index + 1;
             }
         }
 
-        return $this->status === 'draft' || ($this->relationLoaded('editDraft') && $this->editDraft !== null) ? 6 : null;
+        return $this->status === 'draft' || ($this->relationLoaded('editDraft') && $this->editDraft !== null) ? count(self::STEPS) : null;
     }
 
     public function squareMetres(): ?string

@@ -107,6 +107,22 @@ class CropVariety extends Model
         )->withTimestamps();
     }
 
+    /**
+     * Maturity days are used for harvest estimates only when the variety has a valid range
+     * and at least one active, verified knowledge source.
+     */
+    public function hasVerifiedMaturity(): bool
+    {
+        $min = $this->maturity_days_min;
+        $max = $this->maturity_days_max;
+        if ($min === null && $max === null || $min !== null && $max !== null && $max < $min) {
+            return false;
+        }
+
+        return $this->knowledgeSources->contains(fn (KnowledgeSource $source): bool => $source->is_active && $source->verification_status === 'verified')
+            || $this->source_id !== null && KnowledgeSource::query()->whereKey($this->source_id)->where('is_active', true)->where('verification_status', 'verified')->exists();
+    }
+
     public function translatedName(?string $locale = null): ?string
     {
         if (! $this->relationLoaded('translations')) {
