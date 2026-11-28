@@ -57,6 +57,12 @@ class User extends Authenticatable
         return $this->hasMany(Farm::class);
     }
 
+    /** The farmer's water sources and pipelines; every irrigation query is scoped through this relation. */
+    public function irrigationAssets(): HasMany
+    {
+        return $this->hasMany(IrrigationAsset::class);
+    }
+
     public function sendPasswordResetNotification(#[\SensitiveParameter] mixed $token): void
     {
         if (filled($this->email)) {

@@ -6,6 +6,7 @@ use App\Http\Controllers\Account\FarmCropActivityController;
 use App\Http\Controllers\Account\FarmCropController;
 use App\Http\Controllers\Account\FarmCropTimelineController;
 use App\Http\Controllers\Account\FertilizerPriceController;
+use App\Http\Controllers\Account\IrrigationAssetController;
 use App\Http\Controllers\Account\UserController as AccountUserController;
 use App\Http\Controllers\Admin\ActivityCategoryController;
 use App\Http\Controllers\Admin\AdminUserController;
@@ -15,6 +16,7 @@ use App\Http\Controllers\Admin\CropActivityTemplateController;
 use App\Http\Controllers\Admin\CropActivityTemplateTimelineBuilderController;
 use App\Http\Controllers\Admin\CropCategoryController;
 use App\Http\Controllers\Admin\CropController;
+use App\Http\Controllers\Admin\CropFieldLayoutController;
 use App\Http\Controllers\Admin\CropSeedRateController;
 use App\Http\Controllers\Admin\CropStageController;
 use App\Http\Controllers\Admin\CropStageTimelineController;
@@ -31,6 +33,7 @@ use App\Http\Controllers\Admin\SeasonController;
 use App\Http\Controllers\Admin\SeedController;
 use App\Http\Controllers\Admin\SeedLotController;
 use App\Http\Controllers\Admin\SeedPriceController;
+use App\Http\Controllers\Admin\SowingMethodController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('admin')->name('admin.')->group(function (): void {
@@ -44,6 +47,26 @@ Route::prefix('admin')->name('admin.')->group(function (): void {
         Route::apiResource('admin-users', AdminUserController::class)->parameters(['admin-users' => 'admin_user'])->middleware('can:manage-admin-users');
         Route::apiResource('categories', CategoryController::class)->middleware('can:manage-categories');
         Route::apiResource('regions', RegionController::class)->middleware('can:manage-regions');
+
+        Route::middleware('can:manage-crop-field-layouts')->group(function (): void {
+            Route::get('crop-field-layouts/options', [CropFieldLayoutController::class, 'options'])->name('crop-field-layouts.options');
+            Route::post('crop-field-layouts/step-1', [CropFieldLayoutController::class, 'storeBasicDetails'])->name('crop-field-layouts.step-one.store');
+            Route::apiResource('crop-field-layouts', CropFieldLayoutController::class)->only(['index', 'show', 'destroy'])->parameters(['crop-field-layouts' => 'cropFieldLayout']);
+            Route::match(['PUT', 'PATCH'], 'crop-field-layouts/{cropFieldLayout}/step-1', [CropFieldLayoutController::class, 'updateBasicDetails'])->name('crop-field-layouts.step-one.update');
+            Route::match(['PUT', 'PATCH'], 'crop-field-layouts/{cropFieldLayout}/step-2', [CropFieldLayoutController::class, 'updateLayoutConfiguration'])->name('crop-field-layouts.step-two');
+            Route::match(['PUT', 'PATCH'], 'crop-field-layouts/{cropFieldLayout}/step-3', [CropFieldLayoutController::class, 'updateTranslations'])->name('crop-field-layouts.step-three');
+            Route::get('crop-field-layouts/{cropFieldLayout}/review', [CropFieldLayoutController::class, 'review'])->name('crop-field-layouts.review');
+            Route::post('crop-field-layouts/{cropFieldLayout}/finalize', [CropFieldLayoutController::class, 'finalize'])->name('crop-field-layouts.finalize');
+        });
+
+        Route::middleware('can:manage-sowing-methods')->group(function (): void {
+            Route::get('sowing-methods/options', [SowingMethodController::class, 'options'])->name('sowing-methods.options');
+            Route::apiResource('sowing-methods', SowingMethodController::class)->parameters(['sowing-methods' => 'sowingMethod']);
+            Route::match(['PUT', 'PATCH'], 'sowing-methods/{sowingMethod}/step-2', [SowingMethodController::class, 'saveStepTwo'])->name('sowing-methods.step-two');
+            Route::match(['POST', 'PUT', 'PATCH'], 'sowing-methods/{sowingMethod}/step-3', [SowingMethodController::class, 'saveStepThree'])->name('sowing-methods.step-three');
+            Route::post('sowing-methods/{sowingMethod}/finalize', [SowingMethodController::class, 'finalize'])->name('sowing-methods.finalize');
+            Route::patch('sowing-methods/{sowingMethod}/status', [SowingMethodController::class, 'updateStatus'])->name('sowing-methods.status');
+        });
 
         Route::middleware('can:manage-seeds')->group(function (): void {
             Route::apiResource('crop-seed-rates', CropSeedRateController::class)->parameters(['crop-seed-rates' => 'cropSeedRate']);
@@ -213,6 +236,17 @@ Route::prefix('account')->name('account.')->group(function (): void {
         Route::patch('farms/{farm}/details', [AccountFarmController::class, 'updateAdditionalDetails'])->whereNumber('farm')->name('farms.details');
         Route::patch('farms/{farm}/boundary', [AccountFarmController::class, 'updateBoundary'])->whereNumber('farm')->name('farms.boundary');
         Route::patch('farms/{farm}/status', [AccountFarmController::class, 'updateStatus'])->whereNumber('farm')->name('farms.status');
+        // Static paths are registered before {id}.
+        Route::prefix('irrigation-assets')->name('irrigation-assets.')->controller(IrrigationAssetController::class)->group(function (): void {
+            Route::get('/', 'index')->name('index');
+            Route::get('summary', 'summary')->name('summary');
+            Route::get('map', 'map')->name('map');
+            Route::get('options', 'options')->name('options');
+            Route::post('/', 'store')->name('store');
+            Route::get('{id}', 'show')->whereNumber('id')->name('show');
+            Route::patch('{id}', 'update')->whereNumber('id')->name('update');
+            Route::delete('{id}', 'destroy')->whereNumber('id')->name('destroy');
+        });
         Route::patch('profile/personal', [AccountUserController::class, 'updatePersonalDetails'])->name('profile.personal');
         Route::patch('profile/location', [AccountUserController::class, 'updateLocationDetails'])->name('profile.location');
         Route::get('me', [AccountAuthController::class, 'me'])->name('me');

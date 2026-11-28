@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
@@ -62,6 +63,11 @@ class Crop extends Model
     public function seeds(): HasMany
     {
         return $this->hasMany(Seed::class);
+    }
+
+    public function sowingMethods(): BelongsToMany
+    {
+        return $this->belongsToMany(SowingMethod::class, 'sowing_method_crops');
     }
 
     public function seedRates(): HasMany

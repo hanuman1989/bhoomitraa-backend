@@ -9,6 +9,7 @@ use App\Models\KnowledgeSourceAttachment;
 use App\Observers\CategoryObserver;
 use App\Observers\CropObserver;
 use App\Observers\KnowledgeSourceAttachmentObserver;
+use App\Services\SowingMethodManager;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Database\Events\TransactionCommitted;
@@ -28,6 +29,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->singleton(CategoryObserver::class);
+        $this->app->singleton(SowingMethodManager::class);
     }
 
     /**
@@ -44,6 +46,8 @@ class AppServiceProvider extends ServiceProvider
         Gate::define('manage-crop-categories', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-crops', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-seeds', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
+        Gate::define('manage-sowing-methods', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
+        Gate::define('manage-crop-field-layouts', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-fertilizers', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
         Gate::define('manage-crop-ai-diagnosis', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status && $user->is_super_user);
         Gate::define('manage-knowledge-sources', fn (Authenticatable $user): bool => $user instanceof AdminUser && $user->status);
@@ -54,6 +58,8 @@ class AppServiceProvider extends ServiceProvider
         KnowledgeSourceAttachment::observe(KnowledgeSourceAttachmentObserver::class);
         Event::listen(TransactionCommitted::class, [CategoryObserver::class, 'committed']);
         Event::listen(TransactionRolledBack::class, [CategoryObserver::class, 'rolledBack']);
+        Event::listen(TransactionCommitted::class, [SowingMethodManager::class, 'committed']);
+        Event::listen(TransactionRolledBack::class, [SowingMethodManager::class, 'rolledBack']);
 
         RateLimiter::for('login', function (Request $request): array {
             $identifier = $request->input($request->routeIs('account.login') ? 'login' : 'email');

@@ -19,6 +19,7 @@ return [
 
     'crop_images_disk' => env('CROP_IMAGES_DISK', 'public'),
     'seed_images_disk' => env('SEED_IMAGES_DISK', 'public'),
+    'sowing_method_images_disk' => env('SOWING_METHOD_IMAGES_DISK', 'public'),
     'fertilizer_images_disk' => env('FERTILIZER_IMAGES_DISK', 'public'),
 
     'knowledge_sources_disk' => env('KNOWLEDGE_SOURCES_DISK', 'private'),

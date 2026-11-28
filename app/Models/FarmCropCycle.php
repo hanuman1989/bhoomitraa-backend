@@ -86,6 +86,11 @@ class FarmCropCycle extends Model
         return $this->belongsTo(Seed::class)->withTrashed();
     }
 
+    public function sowingMethod(): BelongsTo
+    {
+        return $this->belongsTo(SowingMethod::class, 'sowing_method', 'code');
+    }
+
     public function seedLot(): BelongsTo
     {
         return $this->belongsTo(SeedLot::class);
