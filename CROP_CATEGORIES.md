@@ -2,6 +2,8 @@
 
 The module uses the existing Laravel application, Admin controller namespace, Sanctum bearer-token authentication, and status/data/pagination/message JSON envelope. Validation failures also contain errors.
 
+Related crop master API: [Sowing / Planting Method Manager](SOWING_METHODS.md) documents the admin workflow, translations, crop applicability, images and existing method-code compatibility.
+
 ## Endpoints
 
 All endpoints are relative to /api/admin/crop-categories and require auth:admin, abilities:admin, admin.active, and the manage-crop-categories gate. Active admins may manage categories.
